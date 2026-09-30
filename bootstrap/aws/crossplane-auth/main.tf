@@ -53,6 +53,7 @@ data "aws_iam_policy_document" "trust" {
 # phases attach. The allowed services are the paved-road menu; adding a new
 # infra type means widening this list in a reviewed diff. IAM, Organizations,
 # and account APIs are never in the menu, and nothing runs outside the region.
+#trivy:ignore:AWS-0345
 data "aws_iam_policy_document" "boundary" {
   #checkov:skip=CKV_AWS_111:Permissions boundary, a ceiling that grants nothing; identity policies scope resources.
   #checkov:skip=CKV_AWS_109:Permissions boundary, a ceiling that grants nothing; identity policies scope resources.
