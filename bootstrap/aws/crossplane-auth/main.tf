@@ -183,8 +183,17 @@ data "aws_iam_policy_document" "phase1" {
 
   statement {
     sid       = "ReadPlatformDatabases"
-    actions   = ["rds:DescribeDBInstances", "rds:ListTagsForResource"]
+    actions   = ["rds:ListTagsForResource"]
     resources = [local.db_arn]
+  }
+
+  # The provider looks an instance up by filter before it knows its resource
+  # ID, so AWS evaluates DescribeDBInstances against db:* in this account and
+  # region. Read only (ADR-0014).
+  statement {
+    sid       = "DescribeDatabasesByFilter"
+    actions   = ["rds:DescribeDBInstances"]
+    resources = ["${local.rds_arn_prefix}:db:*"]
   }
 }
 
