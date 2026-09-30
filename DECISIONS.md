@@ -41,7 +41,7 @@ Decision.
 - AppProjects are applied by make argocd-root rather than synced, so a bad commit cannot widen a project.
 - Team Applications keep Argo's default refusal to auto-sync an app down to zero resources (allowEmpty off). A commit that empties a team folder, or a wrong branch or path, therefore cannot delete every Database the team owns. Deleting a team's last Database is one explicit prune-sync, triggered through the Application's operation field with kubectl, which Argo records with the initiating user. Validated in Phase 1: removing claims/team-demo/db-demo.yaml left the app OutOfSync with "auto-sync will wipe out all resources" until the explicit sync, which then deleted the XR and the RDS instance.
 
-Consequences. The GitOps loop is the only path for claims, and the project boundaries mean a scaffolder bug cannot write anything but a Database. New teams need one Application each until ApplicationSet is enabled, which costs memory. Argo reads the phase1-aws branch until PR 1 merges, then main. If the repo becomes public the deploy key can be dropped, but the account ID in the ClusterProviderConfig role ARN should become a deploy-time value first.
+Consequences. The GitOps loop is the only path for claims, and the project boundaries mean a scaffolder bug cannot write anything but a Database. New teams need one Application each until ApplicationSet is enabled, which costs memory. Argo, the Backstage catalog, and the template PR target all track main since Phase 1 merged. If the repo becomes public the deploy key can be dropped, but the account ID in the ClusterProviderConfig role ARN should become a deploy-time value first.
 
 ---
 

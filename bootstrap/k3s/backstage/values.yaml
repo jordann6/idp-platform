@@ -40,7 +40,7 @@ backstage:
         - allow: [Location, Group, User, Template, Component, Resource, System, API]
       locations:
         - type: url
-          target: https://github.com/jordann6/idp-platform/blob/phase1-aws/backstage/catalog/all.yaml
+          target: https://github.com/jordann6/idp-platform/blob/main/backstage/catalog/all.yaml
 
 service:
   ports:

@@ -11,7 +11,7 @@ spec:
   project: teams
   source:
     repoURL: git@github.com:jordann6/idp-platform.git
-    targetRevision: phase1-aws
+    targetRevision: main
     path: claims/team-demo
   destination:
     server: https://kubernetes.default.svc
