@@ -2,6 +2,7 @@ VM            := idp-k3s
 KUBECONFIG    := $(HOME)/.kube/idp-k3s.yaml
 KCTL          := kubectl --kubeconfig $(KUBECONFIG) --context idp-k3s
 ISSUER_TF     := ../aws/oidc-issuer
+AUTH_TF       := ../aws/crossplane-auth
 DISCOVERY_DIR := $(ISSUER_TF)/discovery
 
 # Provider Healthy can read True before the runtime pod exists, so also wait
@@ -63,10 +64,10 @@ aws-provider:
 	$(KCTL) apply -f ../../crossplane/providers/aws/mrap.yaml
 	$(call wait_provider_pod,provider-aws-s3)
 	$(call wait_provider_pod,provider-aws-rds)
-	$(KCTL) apply -f ../../crossplane/providers/aws/cluster-provider-config.yaml
+	@arn=$$(terraform -chdir=$(AUTH_TF) output -raw provider_role_arn) && test -n "$$arn" && sed "s|__PROVIDER_ROLE_ARN__|$$arn|" ../../crossplane/providers/aws/cluster-provider-config.yaml | $(KCTL) apply -f -
 
 aws-verify:
-	$(KCTL) apply -f ../../crossplane/verify/aws-bucket.yaml
+	@bucket=$$(terraform -chdir=$(AUTH_TF) output -raw verify_bucket_name) && test -n "$$bucket" && sed "s|__VERIFY_BUCKET_NAME__|$$bucket|" ../../crossplane/verify/aws-bucket.yaml | $(KCTL) apply -f -
 	$(KCTL) -n idp-verify wait bucket.s3.aws.m.upbound.io/verify --for=condition=Ready --timeout=300s
 	$(KCTL) -n idp-verify get bucket.s3.aws.m.upbound.io/verify
 

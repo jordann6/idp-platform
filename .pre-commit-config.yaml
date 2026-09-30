@@ -39,3 +39,14 @@ repos:
     rev: v0.10.0.1
     hooks:
       - id: shellcheck
+
+  # The repo is meant to go public, so AWS account IDs are filled in at apply
+  # time from Terraform outputs, never committed. Blocks any ARN carrying a
+  # literal 12 digit account ID.
+  - repo: local
+    hooks:
+      - id: no-aws-account-arns
+        name: No AWS account IDs in ARNs
+        language: pygrep
+        entry: 'arn:aws[a-z-]*:[a-z0-9-]*:[a-z0-9-]*:[0-9]{12}:'
+        exclude: \.terraform\.lock\.hcl$
