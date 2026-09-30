@@ -8,6 +8,18 @@ Format: Context, Decision, Consequences.
 
 ---
 
+## ADR-0014: Database network attachment is shared bootstrap, not per claim
+
+Status: Accepted for AWS (validated 2026-09-30)
+
+Context. ADR-0008 puts networking in bootstrap and says each Composition implements the intent "reachable only from the platform network" in its own cloud primitive. On AWS that primitive is a security group plus an RDS subnet group. The obvious design gives every Database claim its own security group. That rule would be identical on every claim (tcp/5432 from the VPC CIDR), so per-claim groups add no isolation, while they require provider-aws-ec2 on the control plane (roughly 300 MiB on a 4 GiB VM, ADR-0010) and ec2 write permissions on the provider role.
+
+Decision. bootstrap/aws/network creates one security group per engine (idp-platform-us-east-postgres: tcp/5432 from the VPC CIDR, no egress) and one RDS subnet group (idp-platform-us-east) across the private subnets. The xdatabase-aws Composition attaches every instance to both, reading their IDs from the platform-regions EnvironmentConfig, so the XRD never sees them. The provider role gets RDS instance lifecycle on the idp- identifier prefix only, with creation gated on aws:RequestTag/Project and changes gated on aws:ResourceTag/Project, and no ec2 write access at all.
+
+Consequences. Smaller control plane and a smaller blast radius for the provider role. The trade is no network isolation between two databases inside the platform VPC: any workload in the VPC can reach any platform Postgres port, and authentication is the only barrier between tenants. If a tenant needs isolation from other tenants, the fix is per-claim security groups sourced from that tenant's workload group, which reintroduces provider-aws-ec2 and scoped ec2 permissions. Two IAM leaks surfaced while scoping the role: CreateDBInstance and ModifyDBInstance authorize against the subnet group, parameter group, and option group ARNs as well as the instance, so those ARNs are pinned in the policy and a new Postgres major version is a reviewed IAM diff; and the RDS service-linked role must already exist, because the permissions boundary denies all IAM. Validated with iam simulate-principal-policy: tagged create on the prefix allowed; untagged create, other prefixes, untagged deletes, other regions, other subnet groups, ec2 writes, IAM, and Aurora clusters denied.
+
+---
+
 ## ADR-0013: Providers come from crossplane-contrib, not the Upbound registry
 
 Status: Accepted
@@ -76,7 +88,7 @@ Consequences. Follows the supported model instead of a legacy path. Namespace be
 
 ## ADR-0008: Networking is a bootstrap concern, private by default, no per-claim NAT
 
-Status: Proposed
+Status: Accepted for AWS (validated 2026-09-30). Proposed for Azure and GCP until their phases.
 
 Context. Networking is the largest leaky abstraction across the three clouds (AWS VPC and security groups, Azure VNet and NSGs, GCP VPC network and firewall rules are all modeled differently) and it is also a primary security and cost surface. Two failure modes to avoid: leaking cloud network primitives into the cloud-agnostic API, and letting each claim create its own VPC and NAT gateway, which is both sprawl and the main cost landmine from ADR-0004.
 
@@ -90,6 +102,8 @@ Posture:
 - Verification without public exposure. The database phase done-criteria (READY=True, connection secret exists) does not require the K3s control plane to reach a private database, so no public path is opened for verification. A true end-to-end connect test runs from inside the cloud network (a throwaway job in the provisioned xcluster or a bastion), not from K3s over the internet.
 
 Consequences. Claims stay cheap and cloud-agnostic, no VPC or NAT sprawl, and the private-by-default posture maps directly to the compliance controls. The cost of shared bootstrap networking is that it is created and destroyed as a unit per cloud, so a demo cycle stands up the network with the first claim and tears it down after the last. The security-group versus NSG versus firewall-rule difference is a known abstraction leak: the XRD carries intent, each Composition carries the implementation, and each new leak gets its own note here. Marked Proposed until validated in the AWS phase, then updated to Accepted with the concrete endpoint and egress mechanism per cloud.
+
+AWS, validated 2026-09-30 (bootstrap/aws/network): VPC 10.60.0.0/16 with two private /20 subnets in us-east-1a and us-east-1b, no internet gateway, no NAT gateway, and a route table holding only the local route and the S3 gateway endpoint. The default security group is adopted with zero rules. Egress mechanism: gateway endpoints only; RDS needs no endpoint because the provider calls the RDS API from K3s, not from inside the VPC. VPC flow logs (ALL traffic) go to CloudWatch with 7 day retention and the managed key, which avoids a standing CMK charge. Standing cost is $0 per month. Database attachment is shared bootstrap per ADR-0014.
 
 ---
 

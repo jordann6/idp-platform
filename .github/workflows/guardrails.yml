@@ -34,6 +34,11 @@ jobs:
     with:
       terraform_dir: bootstrap/aws/budget
 
+  static-aws-network:
+    uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
+    with:
+      terraform_dir: bootstrap/aws/network
+
   static-azure-auth:
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
