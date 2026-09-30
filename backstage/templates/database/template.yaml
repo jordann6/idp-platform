@@ -68,7 +68,7 @@ spec:
           size: ${{ parameters.size }}
           environment: ${{ parameters.environment }}
           costCenter: ${{ parameters.costCenter }}
-          owner: ${{ user.entity.metadata.name }}
+          owner: ${{ user.ref | parseEntityRef | pick('name') }}
 
     - id: pr
       name: Open pull request
