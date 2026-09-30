@@ -8,6 +8,23 @@ Format: Context, Decision, Consequences.
 
 ---
 
+## ADR-0019: Backstage runs slim on the laptop, and its GitHub access is a repo-scoped token
+
+Status: Accepted (validated 2026-09-30)
+
+Context. The Database template must render a claim and open a pull request on this repo, which needs GitHub write access. GitHub offers no CLI or API path to create a fine-grained token or a GitHub App without a browser step. Backstage also has to fit in the 4 GiB VM next to Crossplane and Argo (ADR-0010), and it is reached only through kubectl port-forward.
+
+Decision.
+
+- Backstage 1.55.2 (the upstream image, pinned) with in-memory SQLite and guest sign-in. The catalog, including the Database template and the team Groups, is rebuilt from git on every start, so losing the in-memory database loses nothing.
+- GitHub access is a fine-grained personal access token limited to this repository, with Contents read and write, Pull requests read and write, Commit statuses read-only, and Metadata read-only, expiring in 30 days. It lives in ~/.config/idp-platform on the Mac and is loaded into the backstage namespace by make backstage-token; it is never committed. Commit statuses is required because Backstage's GitHub URL reader calls the commit status API to resolve a ref before fetching a template skeleton; without it the Render claim step fails with 403 while catalog reads still succeed.
+- The template opens a pull request against the branch Argo syncs and never pushes to it, so a human review sits between the portal and the cloud.
+- Owner comes from user.ref, not user.entity, because a user without a catalog entity (the guest) has an empty user.entity. The first run rendered spec.owner empty; the XRD rejected it on a server dry run, so the bad PR was closed without merging.
+
+Consequences. Measured footprint is about 320 MiB, leaving roughly 1.1 GiB free on the VM. Every scaffolded claim is owned by guest until real sign-in exists; GitHub sign-in with a catalog User per developer is the production path and the right place to enforce that the requester belongs to the team they pick. The token is bound to a person and expires, so it must be rotated; a GitHub App with short-lived installation tokens is the production replacement and is deferred because it adds browser-only setup. The Backstage catalog does not yet register a Resource entity for each provisioned Database; that is the remaining piece of the "catalog entry" goal.
+
+---
+
 ## ADR-0018: GitOps delivery with Argo CD, split into a platform project and team projects
 
 Status: Accepted (validated 2026-09-30)
