@@ -1,0 +1,96 @@
+# Paved-road Database. Renders one namespaced XR into claims/<team>/ and opens
+# a pull request; it never pushes to a path Argo syncs (CLAUDE.md, change
+# management). The cloud comes from the team's catalog entry (ADR-0012), and
+# every field mirrors a rule in the xdatabase XRD so bad input fails here.
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: database
+  title: PostgreSQL database
+  description: A private PostgreSQL database on your team's cloud, delivered by pull request.
+  tags:
+    - database
+    - postgres
+spec:
+  owner: group:default/platform
+  type: resource
+  parameters:
+    - title: Database
+      required:
+        - name
+        - team
+        - costCenter
+      properties:
+        name:
+          title: Name
+          description: Lowercase letters, digits, and single hyphens. Becomes part of the cloud identifier.
+          type: string
+          pattern: "^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$"
+          maxLength: 30
+        team:
+          title: Team
+          type: string
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+        size:
+          title: Size
+          type: string
+          enum: [small, medium, large]
+          default: small
+        environment:
+          title: Environment
+          type: string
+          enum: [dev, staging, prod]
+          default: dev
+        costCenter:
+          title: Cost center
+          type: string
+          pattern: "^cc-[0-9]{4}$"
+  steps:
+    - id: team
+      name: Look up team
+      action: catalog:fetch
+      input:
+        entityRef: ${{ parameters.team }}
+
+    - id: render
+      name: Render claim
+      action: fetch:template
+      input:
+        url: ./skeleton
+        targetPath: ./claim
+        values:
+          name: ${{ parameters.name }}
+          namespace: ${{ steps.team.output.entity.metadata.name }}
+          cloud: ${{ steps.team.output.entity.metadata.annotations['platform.jordandesigns.io/default-cloud'] }}
+          size: ${{ parameters.size }}
+          environment: ${{ parameters.environment }}
+          costCenter: ${{ parameters.costCenter }}
+          owner: ${{ user.entity.metadata.name }}
+
+    - id: pr
+      name: Open pull request
+      action: publish:github:pull-request
+      input:
+        repoUrl: github.com?owner=jordann6&repo=idp-platform
+        targetBranchName: phase1-aws
+        branchName: claim/${{ steps.team.output.entity.metadata.name }}-${{ parameters.name }}
+        title: "Database ${{ parameters.name }} for ${{ steps.team.output.entity.metadata.name }}"
+        description: |
+          Requested through the Backstage Database template.
+
+          Team: ${{ steps.team.output.entity.metadata.name }}
+          Size: ${{ parameters.size }}
+          Environment: ${{ parameters.environment }}
+          Cost center: ${{ parameters.costCenter }}
+
+          Merging this PR lets Argo CD create the Database. Closing it creates nothing.
+        sourcePath: ./claim
+        targetPath: claims/${{ steps.team.output.entity.metadata.name }}
+
+  output:
+    links:
+      - title: Pull request
+        url: ${{ steps.pr.output.remoteUrl }}

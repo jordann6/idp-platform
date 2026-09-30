@@ -1,0 +1,47 @@
+# Backstage Helm values for the idp-platform control plane. Reached only by
+# kubectl port-forward on the Mac, so guest sign-in and in-memory SQLite are
+# acceptable (ADR-0019). The GitHub token comes from a Secret loaded by
+# make backstage-token and is never committed.
+backstage:
+  image:
+    registry: ghcr.io
+    repository: backstage/backstage
+    tag: "1.55.2"
+  extraEnvVarsSecrets:
+    - backstage-github
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  appConfig:
+    app:
+      baseUrl: http://localhost:7007
+    backend:
+      baseUrl: http://localhost:7007
+      listen:
+        port: 7007
+      cors:
+        origin: http://localhost:7007
+      database:
+        client: better-sqlite3
+        connection: ":memory:"
+    auth:
+      providers:
+        guest:
+          dangerouslyAllowOutsideDevelopment: true
+    integrations:
+      github:
+        - host: github.com
+          token: ${GITHUB_TOKEN}
+    catalog:
+      rules:
+        - allow: [Location, Group, User, Template, Component, Resource, System, API]
+      locations:
+        - type: url
+          target: https://github.com/jordann6/idp-platform/blob/phase1-aws/backstage/catalog/all.yaml
+
+service:
+  ports:
+    backend: 7007
