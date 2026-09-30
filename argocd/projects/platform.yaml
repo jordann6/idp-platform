@@ -1,0 +1,30 @@
+# Platform-owned objects: the Crossplane APIs and the Argo Applications that
+# deliver them. Applied by make argocd-root (ADR-0018).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: Platform APIs, Compositions, Functions, and the app-of-apps.
+  sourceRepos:
+    - git@github.com:jordann6/idp-platform.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: argocd
+    - server: https://kubernetes.default.svc
+      namespace: crossplane-system
+  clusterResourceWhitelist:
+    - group: apiextensions.crossplane.io
+      kind: CompositeResourceDefinition
+    - group: apiextensions.crossplane.io
+      kind: Composition
+    - group: apiextensions.crossplane.io
+      kind: EnvironmentConfig
+    - group: pkg.crossplane.io
+      kind: Function
+    - group: pkg.crossplane.io
+      kind: DeploymentRuntimeConfig
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: Application

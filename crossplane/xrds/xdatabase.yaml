@@ -7,6 +7,11 @@ apiVersion: apiextensions.crossplane.io/v2
 kind: CompositeResourceDefinition
 metadata:
   name: databases.platform.jordandesigns.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    # Deleting the XRD deletes every Database and its cloud resources, so Argo
+    # never deletes it, even when its Application is deleted with cascade.
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
 spec:
   group: platform.jordandesigns.io
   scope: Namespaced

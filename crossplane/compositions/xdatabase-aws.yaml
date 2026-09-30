@@ -6,6 +6,8 @@ apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
   name: xdatabase-aws
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
   labels:
     platform.jordandesigns.io/cloud: aws
 spec:

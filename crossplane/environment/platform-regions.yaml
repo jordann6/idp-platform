@@ -8,6 +8,8 @@ apiVersion: apiextensions.crossplane.io/v1beta1
 kind: EnvironmentConfig
 metadata:
   name: platform-region-us-east
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   labels:
     platform.jordandesigns.io/region: us-east
 data:

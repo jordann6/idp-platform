@@ -1,0 +1,20 @@
+# Team claims. A team Application can create its namespace and Database XRs,
+# nothing else: no Secrets, no RBAC, no raw managed resources (ADR-0018).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: teams
+  namespace: argocd
+spec:
+  description: Developer-facing XRs written by the scaffolder.
+  sourceRepos:
+    - git@github.com:jordann6/idp-platform.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "team-*"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: platform.jordandesigns.io
+      kind: Database
