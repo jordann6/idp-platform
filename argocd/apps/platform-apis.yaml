@@ -1,0 +1,27 @@
+# Crossplane APIs, Compositions, the region map, and Functions. Providers stay
+# in bootstrap (make aws-provider) because they carry cloud identity wiring.
+# prune is off: removing an XRD from git must never cascade-delete live XRs
+# and their cloud resources. Deletions here are a deliberate manual step.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-apis
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: git@github.com:jordann6/idp-platform.git
+    targetRevision: phase1-aws
+    path: crossplane
+    directory:
+      recurse: true
+      include: "{functions/*.yaml,environment/*.yaml,xrds/*.yaml,compositions/*.yaml}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: crossplane-system
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

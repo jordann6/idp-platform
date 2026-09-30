@@ -102,3 +102,23 @@ platform-apis:
 	$(KCTL) apply -f ../../crossplane/xrds/
 	$(KCTL) wait xrd --all --for=condition=Established=True --timeout=300s
 	$(KCTL) apply -f ../../crossplane/compositions/
+
+ARGOCD_CHART_VERSION := 10.9.2
+DEPLOY_KEY           := $(HOME)/.config/idp-platform/argocd-deploy-key
+REPO_URL             := git@github.com:jordann6/idp-platform.git
+
+.PHONY: argocd-install argocd-repo argocd-root
+
+argocd-install:
+	helm repo add argo https://argoproj.github.io/argo-helm --force-update
+	helm upgrade --install argocd argo/argo-cd --version $(ARGOCD_CHART_VERSION) --namespace argocd --create-namespace --kubeconfig $(KUBECONFIG) --kube-context idp-k3s --values argocd/values.yaml --wait
+
+# ADR-0018: read-only deploy key scoped to this repo, loaded from the Mac.
+# The private key never enters git.
+argocd-repo:
+	@test -f $(DEPLOY_KEY) || (echo "Missing $(DEPLOY_KEY). See ADR-0018." && exit 1)
+	$(KCTL) -n argocd create secret generic repo-idp-platform --from-literal=type=git --from-literal=url=$(REPO_URL) --from-file=sshPrivateKey=$(DEPLOY_KEY) --dry-run=client -o yaml | $(KCTL) label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | $(KCTL) apply -f -
+
+argocd-root:
+	$(KCTL) apply -f ../../argocd/projects/
+	$(KCTL) apply -f ../../argocd/app-of-apps.yaml

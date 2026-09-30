@@ -1,0 +1,90 @@
+# Argo CD Helm values for the idp-platform control plane (ADR-0018). Slim on
+# purpose for the 4 GiB VM (ADR-0010): no Dex, no notifications, no
+# ApplicationSet controller, single replicas, small requests.
+global:
+  domain: localhost
+
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
+
+applicationSet:
+  replicas: 0
+
+configs:
+  params:
+    # Only reachable through kubectl port-forward on the Mac.
+    server.insecure: true
+    # Crossplane fills spec.crossplane.* and status on every XR. Server-side
+    # diff compares only the fields Argo applied, so those never show drift.
+    controller.diff.server.side: "true"
+  cm:
+    application.resourceTrackingMethod: annotation
+    # ProviderConfigUsages churn constantly and are Crossplane's bookkeeping.
+    resource.exclusions: |
+      - apiGroups:
+          - "*.crossplane.io"
+          - "*.upbound.io"
+        kinds:
+          - ProviderConfigUsage
+          - ClusterProviderConfigUsage
+    # Healthy only when the XR is Ready; Degraded when Crossplane cannot sync it.
+    resource.customizations.health.platform.jordandesigns.io_Database: |
+      hs = { status = "Progressing", message = "Waiting for Ready" }
+      if obj.status ~= nil and obj.status.conditions ~= nil then
+        for _, c in ipairs(obj.status.conditions) do
+          if c.type == "Synced" and c.status == "False" then
+            return { status = "Degraded", message = c.message or "Synced=False" }
+          end
+        end
+        for _, c in ipairs(obj.status.conditions) do
+          if c.type == "Ready" and c.status == "True" then
+            return { status = "Healthy", message = "Ready" }
+          end
+        end
+      end
+      return hs
+    resource.customizations.health.pkg.crossplane.io_Function: |
+      hs = { status = "Progressing", message = "Installing" }
+      if obj.status ~= nil and obj.status.conditions ~= nil then
+        for _, c in ipairs(obj.status.conditions) do
+          if c.type == "Healthy" and c.status == "True" then
+            return { status = "Healthy", message = "Healthy" }
+          end
+        end
+      end
+      return hs
+
+controller:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+repoServer:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+server:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+redis:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
