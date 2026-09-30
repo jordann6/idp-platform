@@ -1,0 +1,21 @@
+# ADR-0012: each team carries its default cloud. The Database template reads
+# this annotation instead of asking the developer to pick a cloud.
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: platform
+  description: Owns the paved road.
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: team-demo
+  description: Phase 1 demo team. Its Kubernetes namespace has the same name.
+  annotations:
+    platform.jordandesigns.io/default-cloud: aws
+spec:
+  type: team
+  children: []

@@ -1,0 +1,16 @@
+# Written by the Backstage Database template.
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: Database
+metadata:
+  name: ${{ values.name }}
+  namespace: ${{ values.namespace }}
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: ${{ values.cloud }}
+  size: ${{ values.size }}
+  region: us-east
+  owner: ${{ values.owner }}
+  costCenter: ${{ values.costCenter }}
+  environment: ${{ values.environment }}

@@ -122,3 +122,19 @@ argocd-repo:
 argocd-root:
 	$(KCTL) apply -f ../../argocd/projects/
 	$(KCTL) apply -f ../../argocd/app-of-apps.yaml
+
+BACKSTAGE_CHART_VERSION := 2.10.2
+BACKSTAGE_TOKEN         := $(HOME)/.config/idp-platform/backstage-github-token
+
+.PHONY: backstage-token backstage-install
+
+# ADR-0019: fine-grained PAT limited to this repo (contents and pull requests),
+# loaded from the Mac. The token never enters git.
+backstage-token:
+	@test -s $(BACKSTAGE_TOKEN) || (echo "Missing $(BACKSTAGE_TOKEN). See ADR-0019." && exit 1)
+	$(KCTL) create namespace backstage --dry-run=client -o yaml | $(KCTL) apply -f -
+	$(KCTL) -n backstage create secret generic backstage-github --from-file=GITHUB_TOKEN=$(BACKSTAGE_TOKEN) --dry-run=client -o yaml | $(KCTL) apply -f -
+
+backstage-install:
+	helm repo add backstage https://backstage.github.io/charts --force-update
+	helm upgrade --install backstage backstage/backstage --version $(BACKSTAGE_CHART_VERSION) --namespace backstage --create-namespace --kubeconfig $(KUBECONFIG) --kube-context idp-k3s --values backstage/values.yaml --wait --timeout 10m
