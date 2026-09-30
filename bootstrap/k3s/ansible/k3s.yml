@@ -1,0 +1,99 @@
+- name: Install K3s as the idp-platform control plane
+  hosts: k3s
+  become: true
+  vars:
+    k3s_version: v1.36.4+k3s1
+    k3s_default_issuer: https://kubernetes.default.svc.cluster.local
+    kubeconfig_path: "{{ lookup('env', 'HOME') }}/.kube/idp-k3s.yaml"
+    kube_context: idp-k3s
+
+  pre_tasks:
+    - name: Require the CloudFront issuer URL from bootstrap/aws/oidc-issuer
+      ansible.builtin.assert:
+        that:
+          - issuer_url is defined
+          - issuer_url is match('^https://[a-z0-9]+\.cloudfront\.net$')
+        fail_msg: "Pass -e issuer_url=<terraform output issuer_url>. Apply bootstrap/aws/oidc-issuer first."
+
+  handlers:
+    - name: Restart k3s
+      ansible.builtin.systemd_service:
+        name: k3s
+        state: restarted
+
+  tasks:
+    - name: Create K3s config directory
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write K3s server config
+      ansible.builtin.template:
+        src: templates/config.yaml.j2
+        dest: /etc/rancher/k3s/config.yaml
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Restart k3s
+
+    - name: Read installed K3s version
+      ansible.builtin.command: /usr/local/bin/k3s --version
+      register: k3s_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Download the install script pinned to the K3s release tag
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/k3s-io/k3s/{{ k3s_version | urlencode }}/install.sh"
+        dest: /usr/local/bin/k3s-install.sh
+        owner: root
+        group: root
+        mode: "0755"
+      when: k3s_version not in k3s_installed.stdout | default('')
+
+    - name: Install K3s at the pinned version
+      ansible.builtin.command: /usr/local/bin/k3s-install.sh
+      environment:
+        INSTALL_K3S_VERSION: "{{ k3s_version }}"
+        INSTALL_K3S_EXEC: server
+      changed_when: true
+      when: k3s_version not in k3s_installed.stdout | default('')
+
+    - name: Ensure K3s is enabled and running
+      ansible.builtin.systemd_service:
+        name: k3s
+        enabled: true
+        state: started
+
+    - name: Flush handlers so config changes apply before verification
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for the node to be Ready
+      ansible.builtin.command: /usr/local/bin/k3s kubectl wait --for=condition=Ready node --all --timeout=180s
+      changed_when: false
+      check_mode: false
+
+    - name: Read the cluster kubeconfig
+      ansible.builtin.slurp:
+        src: /etc/rancher/k3s/k3s.yaml
+      register: k3s_kubeconfig
+
+    - name: Ensure ~/.kube exists on the Mac
+      ansible.builtin.file:
+        path: "{{ kubeconfig_path | dirname }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+
+    - name: Write kubeconfig on the Mac with a named context
+      ansible.builtin.copy:
+        content: "{{ k3s_kubeconfig.content | b64decode | regex_replace('(?m)^(\\s*-?\\s*(name|cluster|user|current-context):\\s*)default$', '\\g<1>' ~ kube_context) }}"
+        dest: "{{ kubeconfig_path }}"
+        mode: "0600"
+      delegate_to: localhost
+      become: false

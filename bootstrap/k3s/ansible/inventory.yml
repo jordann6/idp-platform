@@ -1,0 +1,7 @@
+all:
+  children:
+    k3s:
+      hosts:
+        idp-k3s:
+          ansible_host: lima-idp-k3s
+          ansible_ssh_common_args: "-F {{ lookup('env', 'HOME') }}/.lima/idp-k3s/ssh.config"

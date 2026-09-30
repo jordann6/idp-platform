@@ -1,0 +1,28 @@
+# Lima VM that hosts the idp-platform K3s control plane (ADR-0010).
+# Apple Virtualization framework on Apple Silicon, arm64 Ubuntu 24.04.
+vmType: vz
+arch: aarch64
+cpus: 4
+memory: 4GiB
+disk: 20GiB
+
+images:
+  - location: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img
+    arch: aarch64
+
+# No host mounts. Provider pods run third-party images and must never see
+# ~/.aws, ~/.azure, or ~/.config/gcloud on the Mac.
+mounts: []
+
+# K3s ships its own containerd.
+containerd:
+  system: false
+  user: false
+
+# Forward only the Kubernetes API to the Mac, bound to localhost. Every other
+# guest port (kubelet, etcd, NodePorts) stays inside the VM.
+portForwards:
+  - guestPort: 6443
+    hostIP: 127.0.0.1
+  - guestPortRange: [1, 65535]
+    ignore: true
