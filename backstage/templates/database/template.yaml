@@ -75,7 +75,7 @@ spec:
       action: publish:github:pull-request
       input:
         repoUrl: github.com?owner=jordann6&repo=idp-platform
-        targetBranchName: phase1-aws
+        targetBranchName: main
         branchName: claim/${{ steps.team.output.entity.metadata.name }}-${{ parameters.name }}
         title: "Database ${{ parameters.name }} for ${{ steps.team.output.entity.metadata.name }}"
         description: |

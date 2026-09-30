@@ -11,7 +11,7 @@ spec:
   project: platform
   source:
     repoURL: git@github.com:jordann6/idp-platform.git
-    targetRevision: phase1-aws
+    targetRevision: main
     path: crossplane
     directory:
       recurse: true

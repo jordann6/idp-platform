@@ -1,6 +1,6 @@
 # Root of the app-of-apps. Every Application under argocd/apps is delivered
-# from git. targetRevision follows the Phase 1 branch until PR 1 merges, then
-# moves to main.
+# from main. Applied by make argocd-root, not synced, so a commit cannot
+# repoint the root.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -10,7 +10,7 @@ spec:
   project: platform
   source:
     repoURL: git@github.com:jordann6/idp-platform.git
-    targetRevision: phase1-aws
+    targetRevision: main
     path: argocd/apps
   destination:
     server: https://kubernetes.default.svc
