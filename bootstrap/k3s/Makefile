@@ -5,7 +5,9 @@ ISSUER_TF     := ../aws/oidc-issuer
 DISCOVERY_DIR := $(ISSUER_TF)/discovery
 
 # Provider Healthy can read True before the runtime pod exists, so also wait
-# for the provider pod itself to be Ready.
+# for the provider pod itself to be Ready. Crossplane v2 keeps a provider's
+# deployment at zero replicas until one of its MRDs is active, so the MRAP
+# must be applied before this wait or it never returns.
 define wait_provider_pod
 	until $(KCTL) -n crossplane-system get pod -l pkg.crossplane.io/provider=$(1) -o name | grep -q .; do sleep 2; done
 	$(KCTL) -n crossplane-system wait pod -l pkg.crossplane.io/provider=$(1) --for=condition=Ready --timeout=600s
@@ -57,9 +59,10 @@ crossplane-install:
 aws-provider:
 	$(KCTL) apply -f ../../crossplane/providers/aws/runtime-config.yaml
 	$(KCTL) apply -f ../../crossplane/providers/aws/providers.yaml
-	$(KCTL) wait provider.pkg.crossplane.io/provider-family-aws provider.pkg.crossplane.io/provider-aws-s3 --for=condition=Healthy=True --timeout=600s
-	$(call wait_provider_pod,provider-aws-s3)
+	$(KCTL) wait provider.pkg.crossplane.io/provider-family-aws provider.pkg.crossplane.io/provider-aws-s3 provider.pkg.crossplane.io/provider-aws-rds --for=condition=Healthy=True --timeout=600s
 	$(KCTL) apply -f ../../crossplane/providers/aws/mrap.yaml
+	$(call wait_provider_pod,provider-aws-s3)
+	$(call wait_provider_pod,provider-aws-rds)
 	$(KCTL) apply -f ../../crossplane/providers/aws/cluster-provider-config.yaml
 
 aws-verify:
@@ -76,8 +79,8 @@ azure-provider:
 	$(KCTL) apply -f ../../crossplane/providers/azure/runtime-config.yaml
 	$(KCTL) apply -f ../../crossplane/providers/azure/providers.yaml
 	$(KCTL) wait provider.pkg.crossplane.io/provider-family-azure --for=condition=Healthy=True --timeout=600s
-	$(call wait_provider_pod,provider-family-azure)
 	$(KCTL) apply -f ../../crossplane/providers/azure/mrap.yaml
+	$(call wait_provider_pod,provider-family-azure)
 	$(KCTL) apply -f ../../crossplane/providers/azure/cluster-provider-config.yaml
 
 azure-verify:
@@ -98,3 +101,4 @@ platform-apis:
 	$(KCTL) apply -f ../../crossplane/environment/platform-regions.yaml
 	$(KCTL) apply -f ../../crossplane/xrds/
 	$(KCTL) wait xrd --all --for=condition=Established=True --timeout=300s
+	$(KCTL) apply -f ../../crossplane/compositions/

@@ -8,6 +8,30 @@ Format: Context, Decision, Consequences.
 
 ---
 
+## ADR-0016: The connection Secret is a platform contract, readiness waits for it
+
+Status: Accepted for AWS (rendered offline 2026-09-30; live proof pending the Phase 1 Database XR)
+
+Context. ADR-0009 composes the connection Secret in the function pipeline because namespaced XRs have no writeConnectionSecretToRef. Each cloud's provider publishes different connection keys (upjet RDS publishes its own names; Azure and GCP will differ again), so passing a provider's Secret through would leak the cloud into every consumer. A second problem surfaced in crossplane render: function-auto-ready marks the XR Ready once every desired composed resource is ready, so if the Secret is only composed after the password appears, the XR goes Ready before a usable Secret exists.
+
+Decision. Every xdatabase Composition composes a Secret named <xr-name>-conn in the XR namespace with exactly these keys: host, port, username, password, dbname, sslmode. The XR's status.connectionSecret names it. The Secret is always composed and carries the go-templating ready annotation, set True only when host, port, and password are all present, so XR Ready implies a complete Secret. On AWS the provider also writes two internal Secrets in the same namespace: <name>-master (autoGeneratePassword output) and <name>-rds (the MR's own connection details, which is how the password reaches the pipeline).
+
+Consequences. Consumers and the Backstage template depend on one Secret shape regardless of cloud. Three Secrets exist per AWS Database, two of them internal, all namespace scoped (least-privilege-connsecret). The password is still plaintext in Kubernetes Secrets; the External Secrets path in ADR-0002 remains deferred. crossplane render cannot mock composed connection details, so the password branch is only proven live.
+
+---
+
+## ADR-0015: XR names become cloud identifiers, so the XRD enforces the strictest naming rule
+
+Status: Accepted
+
+Context. ADR-0010 requires deterministic external names so a rebuilt control plane re-adopts cloud resources. On AWS the RDS identifier is idp-<namespace>-<name>, and RDS allows 1 to 63 characters, lowercase letters, digits, and hyphens, starting with a letter, with no double hyphens and no trailing hyphen. Kubernetes names allow dots, and up to 253 characters. Azure Postgres Flexible Server names must be globally unique DNS labels, and GCP Cloud SQL instance names cannot be reused for about a week after deletion. The cloud's naming rules leak into the platform API whether or not the XRD admits it.
+
+Decision. The XRD carries a root CEL rule: a Database name is 1 to 30 lowercase letters, digits, or single hyphens, starting with a letter and not ending with a hyphen. With the idp- prefix, this leaves 28 characters for the namespace inside the 63 character RDS limit. Team namespaces follow the same rule by convention until a Kyverno policy enforces it in Phase 5.
+
+Consequences. Developers see a naming error at admission instead of a cloud API error minutes later. The rule is stricter than any single cloud needs, which is the price of one API. Two leaks remain for later phases: Azure global uniqueness will need a suffix that is still deterministic (for example a hash of namespace and name), and GCP name reuse means deleting and recreating a Database with the same name can fail for a week. Both get recorded against this ADR when their phases hit them.
+
+---
+
 ## ADR-0014: Database network attachment is shared bootstrap, not per claim
 
 Status: Accepted for AWS (validated 2026-09-30)
@@ -82,7 +106,7 @@ Context. The original design used Crossplane v1 claims and writeConnectionSecret
 
 Decision. Use Crossplane v2. XRDs are namespaced, and developers create XRs directly in their team namespace. Where this repo says claim, it means a namespaced XR. Connection details are produced by composing a Kubernetes Secret in the function pipeline, into the XR's own namespace. Only the managed resource types a phase needs are activated, which keeps CRD count and API server memory down on the small control plane (ADR-0010).
 
-Consequences. Follows the supported model instead of a legacy path. Namespace becomes the tenancy and RBAC boundary for both the XR and its Secret, which strengthens the least-privilege-connsecret control. ADR-0002's mechanism changes from writeConnectionSecretToRef to a composed Secret; its External Secrets deferral stands. Kyverno policies match the XR kinds instead of claim kinds.
+Consequences. Follows the supported model instead of a legacy path. Namespace becomes the tenancy and RBAC boundary for both the XR and its Secret, which strengthens the least-privilege-connsecret control. ADR-0002's mechanism changes from writeConnectionSecretToRef to a composed Secret; its External Secrets deferral stands. Kyverno policies match the XR kinds instead of claim kinds. Operational note from Phase 1: Crossplane v2 keeps a provider's deployment at zero replicas until at least one of its ManagedResourceDefinitions is active, so the MRAP must be applied before waiting for a new provider's pod.
 
 ---
 

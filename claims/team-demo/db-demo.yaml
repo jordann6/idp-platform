@@ -1,0 +1,17 @@
+# Phase 1 verification Database. The cloud label selects xdatabase-aws;
+# under ADR-0012 the scaffolder fills it from the team's default cloud.
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: Database
+metadata:
+  name: db-demo
+  namespace: team-demo
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: aws
+  size: small
+  region: us-east
+  owner: jordan
+  costCenter: cc-1001
+  environment: dev

@@ -6,3 +6,4 @@ metadata:
 spec:
   activate:
     - buckets.s3.aws.m.upbound.io
+    - instances.rds.aws.m.upbound.io
