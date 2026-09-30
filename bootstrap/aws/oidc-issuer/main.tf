@@ -55,6 +55,8 @@ resource "aws_s3_bucket_versioning" "issuer" {
   }
 }
 
+# SSE-S3 is sufficient for public key material and avoids a KMS key policy for the CloudFront OAC.
+#trivy:ignore:AWS-0132
 resource "aws_s3_bucket_server_side_encryption_configuration" "issuer" {
   bucket = aws_s3_bucket.issuer.id
 
@@ -73,6 +75,8 @@ resource "aws_cloudfront_origin_access_control" "issuer" {
   signing_protocol                  = "sigv4"
 }
 
+# WAF adds a standing monthly charge to serve two static public documents.
+#trivy:ignore:AWS-0011
 resource "aws_cloudfront_distribution" "issuer" {
   #checkov:skip=CKV_AWS_68:WAF adds a standing monthly charge to serve two static public documents.
   #checkov:skip=CKV2_AWS_47:WAF adds a standing monthly charge to serve two static public documents.
