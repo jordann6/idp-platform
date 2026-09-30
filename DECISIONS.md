@@ -181,6 +181,8 @@ Decision. The XRD exposes platform regions (for example us-east). A single platf
 
 Consequences. Developers pick a platform region and get the right cloud region underneath. The map is the one place to maintain region coverage. Adds an EnvironmentConfig dependency to the bootstrap. Regions that do not exist in every cloud must be handled explicitly in the map, which is itself a leak to record when it happens.
 
+Implementation, 2026-09-30: the map is the cluster-scoped EnvironmentConfig platform-regions (crossplane/environment/platform-regions.yaml), loaded into each Composition pipeline by function-environment-configs. Each platform region entry carries the cloud region plus that cloud's shared network attachment from bootstrap (ADR-0014), so bootstrap outputs reach Compositions without touching the XRD. The XRD's region field is an enum of platform regions and is immutable after creation; adding a region is one enum value in the XRD plus one map entry. A known pending leak: this Azure subscription has previously been restricted from Postgres Flexible Server in eastus, so us-east may have to map to a different Azure region than its name suggests. Phase 3 confirms or resolves it here.
+
 ---
 
 ## ADR-0002: Connection secret handling and the External Secrets deferral

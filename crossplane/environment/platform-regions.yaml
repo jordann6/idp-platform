@@ -1,0 +1,25 @@
+# ADR-0003: the single platform region map. Developers pick a platform region
+# in the XR; Compositions read the cloud region and the shared network
+# attachment (ADR-0008, ADR-0014) from here. Nothing in this file appears in
+# the XRD. The AWS values are outputs of bootstrap/aws/network.
+apiVersion: apiextensions.crossplane.io/v1beta1
+kind: EnvironmentConfig
+metadata:
+  name: platform-regions
+  labels:
+    platform.jordandesigns.io/config: regions
+data:
+  regions:
+    us-east:
+      aws:
+        region: us-east-1
+        dbSubnetGroupName: idp-platform-us-east
+        postgresSecurityGroupId: sg-0643f6eadb6f30e4c
+      # Unvalidated until Phase 3. This subscription has been restricted from
+      # Postgres Flexible Server in eastus before; if that holds, us-east maps
+      # to a different Azure region here and the leak is recorded in ADR-0003.
+      azure:
+        region: eastus
+      # Unvalidated until Phase 2.
+      gcp:
+        region: us-east1
