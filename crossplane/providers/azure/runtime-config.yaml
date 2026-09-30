@@ -1,0 +1,36 @@
+# In provider-azure v2 the family provider itself reconciles ResourceGroup, so
+# it gets the fixed service account (ADR-0011) and the projected token for the
+# Entra federated credential. No Azure secret is stored anywhere.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-family-azure
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-family-azure
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 768Mi
+              volumeMounts:
+                - name: azure-federated-token
+                  mountPath: /var/run/secrets/idp-platform/azure
+                  readOnly: true
+          volumes:
+            - name: azure-federated-token
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: api://AzureADTokenExchange
+                      expirationSeconds: 3600
+                      path: token

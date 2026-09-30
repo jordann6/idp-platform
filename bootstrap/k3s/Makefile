@@ -4,6 +4,13 @@ KCTL          := kubectl --kubeconfig $(KUBECONFIG) --context idp-k3s
 ISSUER_TF     := ../aws/oidc-issuer
 DISCOVERY_DIR := $(ISSUER_TF)/discovery
 
+# Provider Healthy can read True before the runtime pod exists, so also wait
+# for the provider pod itself to be Ready.
+define wait_provider_pod
+	until $(KCTL) -n crossplane-system get pod -l pkg.crossplane.io/provider=$(1) -o name | grep -q .; do sleep 2; done
+	$(KCTL) -n crossplane-system wait pod -l pkg.crossplane.io/provider=$(1) --for=condition=Ready --timeout=600s
+endef
+
 .PHONY: vm-up vm-stop vm-destroy k3s k3s-check verify discovery-docs guard-no-managed
 
 vm-up:
@@ -50,7 +57,8 @@ crossplane-install:
 aws-provider:
 	$(KCTL) apply -f ../../crossplane/providers/aws/runtime-config.yaml
 	$(KCTL) apply -f ../../crossplane/providers/aws/providers.yaml
-	$(KCTL) wait provider.pkg.crossplane.io/provider-family-aws provider.pkg.crossplane.io/provider-aws-s3 --for=condition=Healthy --timeout=600s
+	$(KCTL) wait provider.pkg.crossplane.io/provider-family-aws provider.pkg.crossplane.io/provider-aws-s3 --for=condition=Healthy=True --timeout=600s
+	$(call wait_provider_pod,provider-aws-s3)
 	$(KCTL) apply -f ../../crossplane/providers/aws/mrap.yaml
 	$(KCTL) apply -f ../../crossplane/providers/aws/cluster-provider-config.yaml
 
@@ -61,3 +69,21 @@ aws-verify:
 
 aws-verify-delete:
 	$(KCTL) -n idp-verify delete bucket.s3.aws.m.upbound.io/verify --wait
+
+.PHONY: azure-provider azure-verify azure-verify-delete
+
+azure-provider:
+	$(KCTL) apply -f ../../crossplane/providers/azure/runtime-config.yaml
+	$(KCTL) apply -f ../../crossplane/providers/azure/providers.yaml
+	$(KCTL) wait provider.pkg.crossplane.io/provider-family-azure --for=condition=Healthy=True --timeout=600s
+	$(call wait_provider_pod,provider-family-azure)
+	$(KCTL) apply -f ../../crossplane/providers/azure/mrap.yaml
+	$(KCTL) apply -f ../../crossplane/providers/azure/cluster-provider-config.yaml
+
+azure-verify:
+	$(KCTL) apply -f ../../crossplane/verify/azure-resource-group.yaml
+	$(KCTL) -n idp-verify wait resourcegroup.azure.m.upbound.io/verify --for=condition=Ready --timeout=300s
+	$(KCTL) -n idp-verify get resourcegroup.azure.m.upbound.io/verify
+
+azure-verify-delete:
+	$(KCTL) -n idp-verify delete resourcegroup.azure.m.upbound.io/verify --wait

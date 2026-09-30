@@ -34,7 +34,7 @@ Consequences. The developer experience stays identical across clouds, which is t
 
 ## ADR-0011: Workload identity federation leaks per cloud, and the issuer lives in AWS
 
-Status: Proposed
+Status: Accepted for AWS and Azure (validated 2026-09-30). GCP pending its phase.
 
 Context. ADR-0001 federates the K3s service account issuer to all three clouds. Each cloud matches the Kubernetes identity differently. AWS IAM trust policies accept StringLike on the sub claim, so one role can trust every provider-aws service account with a wildcard. GCP Workload Identity Federation evaluates a CEL attribute condition, so a prefix match works. Azure federated identity credentials on a user-assigned managed identity accept only an exact subject, with a limit of 20 credentials per identity. Crossplane generates provider service account names that include the package revision, so exact matching breaks on every provider upgrade.
 
@@ -42,11 +42,13 @@ Decision. Give every provider a fixed service account name through a DeploymentR
 
 Consequences. Azure and GCP authentication depend on the AWS-hosted issuer being reachable. If CloudFront or the bucket is unavailable, new tokens fail to validate on every cloud. Accepted because the issuer is two static documents on a highly available CDN, and moving it (another CDN, a custom domain) only requires changing the issuer URL and republishing. Rotating the K3s service account signing key requires republishing the JWKS; caching is disabled on the distribution so the new key is served immediately.
 
+A second leak surfaced during validation: in provider-azure v2, ResourceGroup is reconciled by the family provider itself, while in provider-aws every resource type lives in a sub-provider. So which pod carries the cloud identity differs per cloud, and the Azure family provider needs the token mount and a federated credential while the AWS family provider needs neither. The list of provider service accounts per cloud lives in each crossplane-auth module and must track which pods reconcile resources.
+
 ---
 
 ## ADR-0010: Control plane runs in a Lima VM on the MacBook
 
-Status: Proposed. Amends ADR-0007.
+Status: Accepted (validated 2026-09-30). Amends ADR-0007.
 
 Context. ADR-0007 assumes an always-on K3s control plane. No always-on host is available yet, and a cloud VM would add standing cost and put the platform brain inside one of the clouds it manages. The available host is an Apple M1 MacBook with 8 GB of RAM and limited free disk, which sleeps.
 
@@ -56,7 +58,7 @@ Decision. Run K3s in a Lima VM (Apple Virtualization framework, arm64 Ubuntu 24.
 - Every Composition sets deterministic external names on its managed resources, so a rebuilt control plane re-adopts existing cloud resources from the XRs in git instead of orphaning them.
 - The same playbook targets an always-on host later. Moving hosts means copying the K3s service account signing key, or republishing the JWKS, and the cloud trusts from ADR-0001 keep working.
 
-Consequences. Zero standing cost and fast iteration. Reconciliation pauses whenever the laptop sleeps, so drift correction and deletion only happen while it is awake. Backstage is not linkable between demos, which ADR-0007 listed as a benefit; that returns when the control plane moves to an always-on host. Memory is the binding constraint and will shape how many providers run concurrently.
+Consequences. Zero standing cost and fast iteration. Reconciliation pauses whenever the laptop sleeps, so drift correction and deletion only happen while it is awake. Backstage is not linkable between demos, which ADR-0007 listed as a benefit; that returns when the control plane moves to an always-on host. Memory is the binding constraint and will shape how many providers run concurrently. Measured at the end of Phase 0: K3s, Crossplane, provider-family-aws, provider-aws-s3, and provider-family-azure use about 2.3 GiB of the 4 GiB VM with one active managed resource type per cloud. The stop guard was tested by creating a Bucket and running make vm-stop, which refused.
 
 ---
 
@@ -181,7 +183,7 @@ Consequences. Fast to ship, honest about the tradeoff. The gap between the demo 
 
 ## ADR-0001: Provider authentication and bootstrap secret storage
 
-Status: Proposed
+Status: Accepted for AWS and Azure (validated 2026-09-30). Proposed for GCP.
 
 Context. The K3s cluster lives outside all three clouds, so Crossplane needs a way to authenticate to each of them. Long-lived plaintext cloud keys in a Secret, or worse in git, is the single biggest credibility gap for a platform that claims to mimic production. The first draft preferred AWS IAM Roles Anywhere, Azure federated service-principal credentials, and GCP Workload Identity Federation. Roles Anywhere turned out to be a poor fit: the Upbound provider-aws ProviderConfig has no Roles Anywhere credential source, so it would need aws_signing_helper in a custom provider image or sidecar, plus a private CA whose key still has to be stored somewhere.
 
@@ -193,4 +195,10 @@ Decision. Make K3s its own OIDC issuer and federate that one issuer to all three
 
 No provider credential is a secret, so SOPS or Sealed Secrets is not needed for provider auth; it is still required later for Argo repository credentials and the Backstage GitHub token. Provider IAM is least privilege: Phase 0 grants only what the verification resources need, and each phase adds exactly what its Compositions manage, as a reviewed diff. AWS permissions sit under a boundary that denies IAM changes and regions other than us-east-1. No cloud resource is created before its ProviderConfig is verified with a trivial managed resource that reaches Ready.
 
-Consequences. No long-lived cloud credential exists anywhere in the platform runtime, and one issuer gives a uniform identity story across three clouds. The human bootstrap path (Terraform run from the laptop) still uses a local IAM user, which is out of scope for the platform runtime and recorded here so it is not overlooked. Rotating the K3s signing key means republishing the JWKS. Moves to Accepted once each cloud's verification resource reaches Ready.
+Consequences. No long-lived cloud credential exists anywhere in the platform runtime, and one issuer gives a uniform identity story across three clouds. The human bootstrap path (Terraform run from the laptop) still uses a local IAM user, which is out of scope for the platform runtime and recorded here so it is not overlooked. Rotating the K3s signing key means republishing the JWKS. Validation, 2026-09-30:
+
+- AWS: provider-aws-s3 assumed idp-crossplane-provider-aws through AssumeRoleWithWebIdentity (CloudTrail userName system:serviceaccount:crossplane-system:provider-aws-s3). A namespaced Bucket reached SYNCED and READY and was deleted cleanly. IAM simulation allows CreateBucket only on the verification prefix and denies other buckets, RDS, and IAM. The ProviderConfig uses source WebIdentity with a Filesystem token rather than IRSA, so the role ARN is explicit in the ProviderConfig instead of hidden in pod environment variables.
+- Azure: provider-family-azure authenticated with source OIDCTokenFile against a user-assigned managed identity. A namespaced ResourceGroup reached SYNCED and READY with the required tags and was deleted cleanly.
+- The cluster holds no cloud credential Secret, and no provider pod has an access key or client secret in its environment.
+
+Accepted for AWS and Azure. GCP stays Proposed until its phase validates Workload Identity Federation.
