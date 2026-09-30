@@ -72,8 +72,11 @@ spec:
                     ManagedBy: crossplane
                 writeConnectionSecretToRef: {}
             patches:
-              # Deterministic identifier (ADR-0010): a rebuilt control plane
-              # re-adopts the same instance from the XR in git.
+              # Deterministic identifier. The provider's external name for RDS
+              # is the AWS-assigned resource ID, not this identifier, so
+              # re-adoption after a control plane rebuild is a lookup step
+              # (ADR-0017). The IAM policy only allows identifiers with the
+              # idp- prefix, so a missing identifier fails closed.
               - type: CombineFromComposite
                 combine:
                   variables:
@@ -82,7 +85,7 @@ spec:
                   strategy: string
                   string:
                     fmt: "idp-%s-%s"
-                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                toFieldPath: spec.forProvider.identifier
 
               - type: FromEnvironmentFieldPath
                 fromFieldPath: aws.region
