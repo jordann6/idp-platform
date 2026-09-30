@@ -8,6 +8,26 @@ Format: Context, Decision, Consequences.
 
 ---
 
+## ADR-0018: GitOps delivery with Argo CD, split into a platform project and team projects
+
+Status: Accepted (validated 2026-09-30)
+
+Context. CLAUDE.md makes GitOps the change-management control: every infra change is a reviewed commit that Argo syncs. Two risks are specific to Crossplane. Deleting an XRD deletes every XR of that type and, through them, the cloud resources, so an ordinary prune or a cascading Application delete could destroy every team's database. And Crossplane writes spec.crossplane fields and status onto every XR, which a client-side diff reports as permanent drift. The repo is also private, so Argo needs a credential, and Argo shares the 4 GiB VM (ADR-0010).
+
+Decision.
+
+- Install Argo CD slim: no Dex, no notifications, ApplicationSet at zero replicas, small requests. Server-side diff is on, so only the fields Argo applied are compared, and tracking is by annotation so Argo never adopts resources Crossplane composes.
+- Two AppProjects. platform may manage only XRDs, Compositions, EnvironmentConfigs, Functions, DeploymentRuntimeConfigs, and Applications. teams may create only Database XRs and their own namespace, in team-* namespaces. A team folder therefore cannot create Secrets, RBAC, or raw managed resources, which enforces the paved road at delivery time before Kyverno exists.
+- platform-apis syncs without prune, and the XRD carries Delete=false and Prune=false, so removing platform objects is a deliberate manual step. Team Applications prune, because deleting a claim file is the intended teardown.
+- Providers and ProviderConfigs stay in bootstrap (make aws-provider), because they carry the cloud identity wiring from ADR-0001 and are installed per phase for memory.
+- Repo access is a read-only ed25519 deploy key for this repo only, loaded from ~/.config/idp-platform by make argocd-repo and never committed. The initial admin Secret was deleted after install. Committing encrypted secrets (Sealed Secrets or SOPS) is deferred until a secret has to live in git.
+- AppProjects are applied by make argocd-root rather than synced, so a bad commit cannot widen a project.
+- Team Applications keep Argo's default refusal to auto-sync an app down to zero resources (allowEmpty off). A commit that empties a team folder, or a wrong branch or path, therefore cannot delete every Database the team owns. Deleting a team's last Database is one explicit prune-sync, triggered through the Application's operation field with kubectl, which Argo records with the initiating user. Validated in Phase 1: removing claims/team-demo/db-demo.yaml left the app OutOfSync with "auto-sync will wipe out all resources" until the explicit sync, which then deleted the XR and the RDS instance.
+
+Consequences. The GitOps loop is the only path for claims, and the project boundaries mean a scaffolder bug cannot write anything but a Database. New teams need one Application each until ApplicationSet is enabled, which costs memory. Argo reads the phase1-aws branch until PR 1 merges, then main. If the repo becomes public the deploy key can be dropped, but the account ID in the ClusterProviderConfig role ARN should become a deploy-time value first.
+
+---
+
 ## ADR-0017: RDS external names are assigned by AWS, so re-adoption is a lookup, not automatic
 
 Status: Accepted. Amends ADR-0010.
