@@ -1,0 +1,22 @@
+# Crossplane v2 Helm values for the idp-platform control plane (ADR-0009, ADR-0010).
+provider:
+  # No managed resource types are active by default. Each phase activates only
+  # the types it uses through crossplane/providers/*/mrap.yaml, which keeps the
+  # CRD count and API server memory small on the 4 GiB VM.
+  defaultActivations: []
+
+resourcesCrossplane:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+resourcesRBACManager:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 256Mi

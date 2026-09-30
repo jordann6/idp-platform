@@ -1,0 +1,35 @@
+# Fixed service account name (ADR-0011) plus a projected token for the K3s
+# issuer with the STS audience. No AWS credential is stored anywhere.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-aws-s3
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-aws-s3
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 768Mi
+              volumeMounts:
+                - name: aws-web-identity
+                  mountPath: /var/run/secrets/idp-platform/aws
+                  readOnly: true
+          volumes:
+            - name: aws-web-identity
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: sts.amazonaws.com
+                      expirationSeconds: 3600
+                      path: token

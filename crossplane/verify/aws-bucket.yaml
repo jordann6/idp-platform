@@ -1,0 +1,27 @@
+# Phase 0 verification: a trivial managed resource that must reach Ready before
+# any real AWS resource is created. Deterministic external name (ADR-0010).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: idp-verify
+---
+apiVersion: s3.aws.m.upbound.io/v1beta1
+kind: Bucket
+metadata:
+  name: verify
+  namespace: idp-verify
+  annotations:
+    crossplane.io/external-name: idp-platform-verify-ACCOUNT_ID
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: aws
+  forProvider:
+    region: us-east-1
+    forceDestroy: true
+    tags:
+      Project: idp-platform
+      Environment: verify
+      Owner: jordan
+      ManagedBy: crossplane
+      CostCenter: cc-1001

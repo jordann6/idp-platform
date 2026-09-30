@@ -1,0 +1,8 @@
+# Activate only the AWS managed resource types the current phase uses.
+apiVersion: apiextensions.crossplane.io/v1alpha1
+kind: ManagedResourceActivationPolicy
+metadata:
+  name: aws
+spec:
+  activate:
+    - buckets.s3.aws.m.upbound.io
