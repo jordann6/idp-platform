@@ -1,5 +1,7 @@
 # Phase 0 verification: a trivial managed resource that must reach Ready before
-# any real AWS resource is created. Deterministic external name (ADR-0010).
+# any real AWS resource is created. Deterministic external name (ADR-0010),
+# filled in at apply time from crossplane-auth output verify_bucket_name by
+# make aws-verify, so no account ID is committed.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -11,7 +13,7 @@ metadata:
   name: verify
   namespace: idp-verify
   annotations:
-    crossplane.io/external-name: idp-platform-verify-ACCOUNT_ID
+    crossplane.io/external-name: __VERIFY_BUCKET_NAME__
 spec:
   providerConfigRef:
     kind: ClusterProviderConfig

@@ -1,5 +1,6 @@
 # ADR-0001: AssumeRoleWithWebIdentity with the projected K3s token. The role
-# comes from bootstrap/aws/crossplane-auth (output provider_role_arn).
+# ARN is filled in at apply time from bootstrap/aws/crossplane-auth (output
+# provider_role_arn) by make aws-provider, so no account ID is committed.
 apiVersion: aws.m.upbound.io/v1beta1
 kind: ClusterProviderConfig
 metadata:
@@ -8,7 +9,7 @@ spec:
   credentials:
     source: WebIdentity
     webIdentity:
-      roleARN: arn:aws:iam::ACCOUNT_ID:role/idp-crossplane-provider-aws
+      roleARN: __PROVIDER_ROLE_ARN__
       roleSessionName: idp-crossplane
       tokenConfig:
         source: Filesystem
