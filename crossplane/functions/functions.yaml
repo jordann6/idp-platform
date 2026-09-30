@@ -1,0 +1,61 @@
+# Composition Functions for the paved road (ADR-0009). crossplane-contrib builds
+# from xpkg.crossplane.io, pinned to exact versions (ADR-0013). Every function
+# shares one small runtime config to stay inside the 4 GiB VM (ADR-0010).
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: function-small
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 256Mi
+---
+# Loads the platform-regions EnvironmentConfig into the pipeline context.
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-environment-configs
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/function-environment-configs:v0.7.0
+  runtimeConfigRef:
+    name: function-small
+---
+# Composes managed resources and patches status back to the XR.
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-patch-and-transform
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/function-patch-and-transform:v0.9.0
+  runtimeConfigRef:
+    name: function-small
+---
+# Composes the connection Secret into the XR namespace.
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-go-templating
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/function-go-templating:v0.11.0
+  runtimeConfigRef:
+    name: function-small
+---
+# Marks composed resources ready from their own Ready condition.
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-auto-ready
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/function-auto-ready:v0.7.0
+  runtimeConfigRef:
+    name: function-small

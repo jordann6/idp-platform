@@ -87,3 +87,14 @@ azure-verify:
 
 azure-verify-delete:
 	$(KCTL) -n idp-verify delete resourcegroup.azure.m.upbound.io/verify --wait
+
+.PHONY: functions platform-apis
+
+functions:
+	$(KCTL) apply -f ../../crossplane/functions/functions.yaml
+	$(KCTL) wait function.pkg.crossplane.io --all --for=condition=Healthy=True --timeout=600s
+
+platform-apis:
+	$(KCTL) apply -f ../../crossplane/environment/platform-regions.yaml
+	$(KCTL) apply -f ../../crossplane/xrds/
+	$(KCTL) wait xrd --all --for=condition=Established=True --timeout=300s
