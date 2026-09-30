@@ -102,7 +102,7 @@ resource "aws_iam_role" "provider" {
 }
 
 # Phase 0: exactly what the verification Bucket needs, on the verification
-# prefix only. Phase 1 adds RDS and EC2 networking as its own reviewed diff.
+# prefix only. Phase 1 adds RDS as its own reviewed diff below.
 data "aws_iam_policy_document" "phase0" {
   statement {
     sid = "VerifyBucketLifecycle"
@@ -130,4 +130,80 @@ resource "aws_iam_policy" "phase0" {
 resource "aws_iam_role_policy_attachment" "phase0" {
   role       = aws_iam_role.provider.name
   policy_arn = aws_iam_policy.phase0.arn
+}
+
+locals {
+  rds_arn_prefix = "arn:aws:rds:${var.region}:${data.aws_caller_identity.current.account_id}"
+  db_arn         = "${local.rds_arn_prefix}:db:${var.db_identifier_prefix}*"
+
+  # CreateDBInstance and ModifyDBInstance authorize against every resource the
+  # instance references, not only the instance itself.
+  db_dependency_arns = [
+    "${local.rds_arn_prefix}:subgrp:${var.db_subnet_group_name}",
+    "${local.rds_arn_prefix}:pg:default.postgres${var.postgres_major_version}",
+    "${local.rds_arn_prefix}:og:default:postgres-${var.postgres_major_version}",
+  ]
+}
+
+# Phase 1: RDS instance lifecycle for the xdatabase-aws Composition, on the
+# platform identifier prefix only. Creation requires the Project tag and
+# changes require it on the existing instance, so the role cannot touch an
+# RDS instance it did not create. No ec2 write access: networking is shared
+# bootstrap (ADR-0008). The RDS service-linked role already exists, so no IAM.
+data "aws_iam_policy_document" "phase1" {
+  statement {
+    sid       = "CreateTaggedPlatformDatabases"
+    actions   = ["rds:CreateDBInstance", "rds:AddTagsToResource"]
+    resources = [local.db_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = ["idp-platform"]
+    }
+  }
+
+  statement {
+    sid       = "ManagePlatformDatabases"
+    actions   = ["rds:ModifyDBInstance", "rds:DeleteDBInstance", "rds:RebootDBInstance", "rds:RemoveTagsFromResource"]
+    resources = [local.db_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = ["idp-platform"]
+    }
+  }
+
+  statement {
+    sid       = "ReferencePlatformDependencies"
+    actions   = ["rds:CreateDBInstance", "rds:ModifyDBInstance"]
+    resources = local.db_dependency_arns
+  }
+
+  statement {
+    sid       = "ReadPlatformDatabases"
+    actions   = ["rds:ListTagsForResource"]
+    resources = [local.db_arn]
+  }
+
+  # The provider looks an instance up by filter before it knows its resource
+  # ID, so AWS evaluates DescribeDBInstances against db:* in this account and
+  # region. Read only (ADR-0014).
+  statement {
+    sid       = "DescribeDatabasesByFilter"
+    actions   = ["rds:DescribeDBInstances"]
+    resources = ["${local.rds_arn_prefix}:db:*"]
+  }
+}
+
+resource "aws_iam_policy" "phase1" {
+  name        = "idp-crossplane-provider-aws-phase1"
+  description = "Phase 1 RDS permissions for the idp-platform Crossplane AWS provider."
+  policy      = data.aws_iam_policy_document.phase1.json
+}
+
+resource "aws_iam_role_policy_attachment" "phase1" {
+  role       = aws_iam_role.provider.name
+  policy_arn = aws_iam_policy.phase1.arn
 }

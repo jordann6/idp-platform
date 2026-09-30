@@ -1,0 +1,10 @@
+# Single catalog entry point registered in the Backstage app config.
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: idp-platform
+  description: Teams and paved-road templates for idp-platform.
+spec:
+  targets:
+    - ./groups.yaml
+    - ../templates/database/template.yaml

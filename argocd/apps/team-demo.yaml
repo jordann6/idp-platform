@@ -1,0 +1,25 @@
+# One Application per team namespace, in the teams project, so a team's
+# folder can only produce Database XRs in its own namespace (ADR-0018).
+# prune is on: deleting a claim file from git deletes the Database and its
+# cloud resources, which is the intended teardown path.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: team-demo
+  namespace: argocd
+spec:
+  project: teams
+  source:
+    repoURL: git@github.com:jordann6/idp-platform.git
+    targetRevision: main
+    path: claims/team-demo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: team-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
