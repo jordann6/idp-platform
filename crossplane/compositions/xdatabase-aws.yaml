@@ -1,0 +1,225 @@
+# xdatabase on AWS: RDS for PostgreSQL, smallest tier by default, private only.
+# Pipeline: load the platform region entry, compose the RDS instance and patch
+# its endpoint back to the XR, compose the uniform connection Secret, then mark
+# readiness. The network attachment comes from bootstrap (ADR-0008, ADR-0014).
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xdatabase-aws
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    platform.jordandesigns.io/cloud: aws
+spec:
+  compositeTypeRef:
+    apiVersion: platform.jordandesigns.io/v1alpha1
+    kind: Database
+  mode: Pipeline
+  pipeline:
+    - step: load-platform-region
+      functionRef:
+        name: function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Selector
+              selector:
+                mode: Single
+                matchLabels:
+                  - key: platform.jordandesigns.io/region
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.region
+
+    - step: compose-rds
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: rds-instance
+            base:
+              apiVersion: rds.aws.m.upbound.io/v1beta1
+              kind: Instance
+              spec:
+                providerConfigRef:
+                  kind: ClusterProviderConfig
+                  name: aws
+                forProvider:
+                  engine: postgres
+                  storageType: gp3
+                  # ADR-0004: single AZ, no backups kept, nothing left behind.
+                  multiAz: false
+                  backupRetentionPeriod: 0
+                  deleteAutomatedBackups: true
+                  skipFinalSnapshot: true
+                  deletionProtection: false
+                  # deny-public-database and require-encryption-at-rest.
+                  publiclyAccessible: false
+                  storageEncrypted: true
+                  performanceInsightsEnabled: false
+                  monitoringInterval: 0
+                  autoMinorVersionUpgrade: true
+                  applyImmediately: true
+                  copyTagsToSnapshot: true
+                  dbName: app
+                  username: app_admin
+                  autoGeneratePassword: true
+                  passwordSecretRef:
+                    key: password
+                  tags:
+                    Project: idp-platform
+                    ManagedBy: crossplane
+                writeConnectionSecretToRef: {}
+            patches:
+              # Deterministic identifier. The provider's external name for RDS
+              # is the AWS-assigned resource ID, not this identifier, so
+              # re-adoption after a control plane rebuild is a lookup step
+              # (ADR-0017). The IAM policy only allows identifiers with the
+              # idp- prefix, so a missing identifier fails closed.
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: metadata.namespace
+                    - fromFieldPath: metadata.name
+                  strategy: string
+                  string:
+                    fmt: "idp-%s-%s"
+                toFieldPath: spec.forProvider.identifier
+
+              - type: FromEnvironmentFieldPath
+                fromFieldPath: aws.region
+                toFieldPath: spec.forProvider.region
+              - type: FromEnvironmentFieldPath
+                fromFieldPath: aws.dbSubnetGroupName
+                toFieldPath: spec.forProvider.dbSubnetGroupName
+              - type: FromEnvironmentFieldPath
+                fromFieldPath: aws.postgresSecurityGroupId
+                toFieldPath: spec.forProvider.vpcSecurityGroupIds[0]
+
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.engineVersion
+                toFieldPath: spec.forProvider.engineVersion
+
+              # T-shirt sizes to AWS SKUs. Only this file knows the SKUs.
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.size
+                toFieldPath: spec.forProvider.instanceClass
+                transforms:
+                  - type: map
+                    map:
+                      small: db.t4g.micro
+                      medium: db.t4g.small
+                      large: db.t4g.medium
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.size
+                toFieldPath: spec.forProvider.allocatedStorage
+                transforms:
+                  - type: map
+                    map:
+                      small: 20
+                      medium: 50
+                      large: 100
+
+              # Provider-owned Secrets, internal to the Composition. Consumers
+              # read the composed <name>-conn Secret instead.
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.passwordSecretRef.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-master"
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.writeConnectionSecretToRef.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-rds"
+
+              # Required tags (require-tags control).
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.owner
+                toFieldPath: spec.forProvider.tags.Owner
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.costCenter
+                toFieldPath: spec.forProvider.tags.CostCenter
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.environment
+                toFieldPath: spec.forProvider.tags.Environment
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.tags.Team
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.tags.Database
+
+              # Cloud-neutral status for consumers.
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.address
+                toFieldPath: status.endpoint
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.port
+                toFieldPath: status.port
+
+    # ADR-0009: the consumer Secret has the same keys on every cloud (host,
+    # port, username, password, dbname, sslmode), in the XR's namespace. It is
+    # always composed but reports ready only once the host and password exist,
+    # so the XR cannot reach Ready without a usable Secret.
+    - step: compose-connection-secret
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $secretName := printf "%s-conn" $xr.metadata.name }}
+            {{- $rds := dig "observed" "resources" "rds-instance" dict . }}
+            {{- $address := dig "resource" "status" "atProvider" "address" "" $rds }}
+            {{- $port := dig "resource" "status" "atProvider" "port" "" $rds }}
+            {{- $cd := dig "connectionDetails" dict $rds }}
+            {{- $complete := false }}
+            {{- if and $address $port (hasKey $cd "password") }}
+            {{- $complete = true }}
+            {{- end }}
+            ---
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: {{ $secretName }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: connection-secret
+                gotemplating.fn.crossplane.io/ready: {{ ternary "True" "False" $complete | quote }}
+              labels:
+                platform.jordandesigns.io/database: {{ $xr.metadata.name }}
+            type: Opaque
+            data:
+              username: {{ "app_admin" | b64enc }}
+              dbname: {{ "app" | b64enc }}
+              sslmode: {{ "require" | b64enc }}
+              {{- if $address }}
+              host: {{ $address | b64enc }}
+              {{- end }}
+              {{- if $port }}
+              port: {{ $port | toString | b64enc }}
+              {{- end }}
+              {{- if hasKey $cd "password" }}
+              password: {{ index $cd "password" }}
+              {{- end }}
+            ---
+            apiVersion: {{ $xr.apiVersion }}
+            kind: {{ $xr.kind }}
+            status:
+              connectionSecret: {{ $secretName }}
+
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready

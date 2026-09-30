@@ -8,6 +8,91 @@ Format: Context, Decision, Consequences.
 
 ---
 
+## ADR-0019: Backstage runs slim on the laptop, and its GitHub access is a repo-scoped token
+
+Status: Accepted (validated 2026-09-30)
+
+Context. The Database template must render a claim and open a pull request on this repo, which needs GitHub write access. GitHub offers no CLI or API path to create a fine-grained token or a GitHub App without a browser step. Backstage also has to fit in the 4 GiB VM next to Crossplane and Argo (ADR-0010), and it is reached only through kubectl port-forward.
+
+Decision.
+
+- Backstage 1.55.2 (the upstream image, pinned) with in-memory SQLite and guest sign-in. The catalog, including the Database template and the team Groups, is rebuilt from git on every start, so losing the in-memory database loses nothing.
+- GitHub access is a fine-grained personal access token limited to this repository, with Contents read and write, Pull requests read and write, Commit statuses read-only, and Metadata read-only, expiring in 30 days. It lives in ~/.config/idp-platform on the Mac and is loaded into the backstage namespace by make backstage-token; it is never committed. Commit statuses is required because Backstage's GitHub URL reader calls the commit status API to resolve a ref before fetching a template skeleton; without it the Render claim step fails with 403 while catalog reads still succeed.
+- The template opens a pull request against the branch Argo syncs and never pushes to it, so a human review sits between the portal and the cloud.
+- Owner comes from user.ref, not user.entity, because a user without a catalog entity (the guest) has an empty user.entity. The first run rendered spec.owner empty; the XRD rejected it on a server dry run, so the bad PR was closed without merging.
+
+Consequences. Measured footprint is about 320 MiB, leaving roughly 1.1 GiB free on the VM. Every scaffolded claim is owned by guest until real sign-in exists; GitHub sign-in with a catalog User per developer is the production path and the right place to enforce that the requester belongs to the team they pick. The token is bound to a person and expires, so it must be rotated; a GitHub App with short-lived installation tokens is the production replacement and is deferred because it adds browser-only setup. The Backstage catalog does not yet register a Resource entity for each provisioned Database; that is the remaining piece of the "catalog entry" goal.
+
+---
+
+## ADR-0018: GitOps delivery with Argo CD, split into a platform project and team projects
+
+Status: Accepted (validated 2026-09-30)
+
+Context. CLAUDE.md makes GitOps the change-management control: every infra change is a reviewed commit that Argo syncs. Two risks are specific to Crossplane. Deleting an XRD deletes every XR of that type and, through them, the cloud resources, so an ordinary prune or a cascading Application delete could destroy every team's database. And Crossplane writes spec.crossplane fields and status onto every XR, which a client-side diff reports as permanent drift. The repo is also private, so Argo needs a credential, and Argo shares the 4 GiB VM (ADR-0010).
+
+Decision.
+
+- Install Argo CD slim: no Dex, no notifications, ApplicationSet at zero replicas, small requests. Server-side diff is on, so only the fields Argo applied are compared, and tracking is by annotation so Argo never adopts resources Crossplane composes.
+- Two AppProjects. platform may manage only XRDs, Compositions, EnvironmentConfigs, Functions, DeploymentRuntimeConfigs, and Applications. teams may create only Database XRs and their own namespace, in team-* namespaces. A team folder therefore cannot create Secrets, RBAC, or raw managed resources, which enforces the paved road at delivery time before Kyverno exists.
+- platform-apis syncs without prune, and the XRD carries Delete=false and Prune=false, so removing platform objects is a deliberate manual step. Team Applications prune, because deleting a claim file is the intended teardown.
+- Providers and ProviderConfigs stay in bootstrap (make aws-provider), because they carry the cloud identity wiring from ADR-0001 and are installed per phase for memory.
+- Repo access is a read-only ed25519 deploy key for this repo only, loaded from ~/.config/idp-platform by make argocd-repo and never committed. The initial admin Secret was deleted after install. Committing encrypted secrets (Sealed Secrets or SOPS) is deferred until a secret has to live in git.
+- AppProjects are applied by make argocd-root rather than synced, so a bad commit cannot widen a project.
+- Team Applications keep Argo's default refusal to auto-sync an app down to zero resources (allowEmpty off). A commit that empties a team folder, or a wrong branch or path, therefore cannot delete every Database the team owns. Deleting a team's last Database is one explicit prune-sync, triggered through the Application's operation field with kubectl, which Argo records with the initiating user. Validated in Phase 1: removing claims/team-demo/db-demo.yaml left the app OutOfSync with "auto-sync will wipe out all resources" until the explicit sync, which then deleted the XR and the RDS instance.
+
+Consequences. The GitOps loop is the only path for claims, and the project boundaries mean a scaffolder bug cannot write anything but a Database. New teams need one Application each until ApplicationSet is enabled, which costs memory. Argo, the Backstage catalog, and the template PR target all track main since Phase 1 merged. If the repo becomes public the deploy key can be dropped, but the account ID in the ClusterProviderConfig role ARN should become a deploy-time value first.
+
+---
+
+## ADR-0017: RDS external names are assigned by AWS, so re-adoption is a lookup, not automatic
+
+Status: Accepted. Amends ADR-0010.
+
+Context. ADR-0010 says every Composition sets a deterministic external name, so a rebuilt control plane re-adopts cloud resources from the XRs in git. In provider-upjet-aws v2.8.1 the RDS Instance uses IdentifierFromProvider: its external name is the AWS DbiResourceId (db-XXXX), assigned at creation, and the human identifier is an ordinary spec field. The first Phase 1 attempt set the crossplane.io/external-name annotation to the identifier; the provider ignored it as a name, left identifier empty, and Terraform generated terraform-<random>. The IAM prefix scope from ADR-0014 denied CreateDBInstance, so nothing was created. That is the permissions design working as a guardrail, and it is the reason the identifier scope stays.
+
+Decision. The Composition sets spec.forProvider.identifier to idp-<namespace>-<name> and leaves the external name to the provider. Which external-name strategy a resource uses is checked in the provider's config/externalname.go before its Composition is written, and each Composition's comment says which it is.
+
+Consequences. The identifier is still deterministic, so a rebuilt control plane cannot create a duplicate: a fresh MR fails with DBInstanceAlreadyExists instead of orphaning a second billed database. Re-adoption becomes a manual lookup: read the DbiResourceId with aws rds describe-db-instances --db-instance-identifier idp-<namespace>-<name>, and set it as the crossplane.io/external-name annotation on the new Instance MR. This procedure is written down but has not been exercised against a rebuilt control plane. Resources whose provider uses the name as the external name (for example the S3 Bucket in Phase 0) keep the automatic re-adoption ADR-0010 describes. This is a per-resource leak of the provider implementation into the platform's recovery story, and every new Composition must record which kind it is.
+
+---
+
+## ADR-0016: The connection Secret is a platform contract, readiness waits for it
+
+Status: Accepted for AWS (validated live 2026-09-30)
+
+Context. ADR-0009 composes the connection Secret in the function pipeline because namespaced XRs have no writeConnectionSecretToRef. Each cloud's provider publishes different connection keys (upjet RDS publishes its own names; Azure and GCP will differ again), so passing a provider's Secret through would leak the cloud into every consumer. A second problem surfaced in crossplane render: function-auto-ready marks the XR Ready once every desired composed resource is ready, so if the Secret is only composed after the password appears, the XR goes Ready before a usable Secret exists.
+
+Decision. Every xdatabase Composition composes a Secret named <xr-name>-conn in the XR namespace with exactly these keys: host, port, username, password, dbname, sslmode. The XR's status.connectionSecret names it. The Secret is always composed and carries the go-templating ready annotation, set True only when host, port, and password are all present, so XR Ready implies a complete Secret. On AWS the provider also writes two internal Secrets in the same namespace: <name>-master (autoGeneratePassword output) and <name>-rds (the MR's own connection details, which is how the password reaches the pipeline).
+
+Consequences. Consumers and the Backstage template depend on one Secret shape regardless of cloud. Three Secrets exist per AWS Database, two of them internal, all namespace scoped (least-privilege-connsecret). The password is still plaintext in Kubernetes Secrets; the External Secrets path in ADR-0002 remains deferred. crossplane render cannot mock composed connection details, so the password branch is only proven live. Live proof, 2026-09-30: Database team-demo/db-demo reached READY and SYNCED in about five minutes; db-demo-conn held exactly the six keys, its password matched the provider's db-demo-master Secret, and the endpoint resolved to a private 10.60.0.0/16 address. AWS showed db.t4g.micro, Postgres 17.9, 20 GiB gp3, not public, encrypted, single AZ, no backups, the shared subnet group and security group, and all required tags.
+
+---
+
+## ADR-0015: XR names become cloud identifiers, so the XRD enforces the strictest naming rule
+
+Status: Accepted
+
+Context. ADR-0010 requires deterministic external names so a rebuilt control plane re-adopts cloud resources. On AWS the RDS identifier is idp-<namespace>-<name>, and RDS allows 1 to 63 characters, lowercase letters, digits, and hyphens, starting with a letter, with no double hyphens and no trailing hyphen. Kubernetes names allow dots, and up to 253 characters. Azure Postgres Flexible Server names must be globally unique DNS labels, and GCP Cloud SQL instance names cannot be reused for about a week after deletion. The cloud's naming rules leak into the platform API whether or not the XRD admits it.
+
+Decision. The XRD carries a root CEL rule: a Database name is 1 to 30 lowercase letters, digits, or single hyphens, starting with a letter and not ending with a hyphen. With the idp- prefix, this leaves 28 characters for the namespace inside the 63 character RDS limit. Team namespaces follow the same rule by convention until a Kyverno policy enforces it in Phase 5.
+
+Consequences. Developers see a naming error at admission instead of a cloud API error minutes later. The rule is stricter than any single cloud needs, which is the price of one API. Two leaks remain for later phases: Azure global uniqueness will need a suffix that is still deterministic (for example a hash of namespace and name), and GCP name reuse means deleting and recreating a Database with the same name can fail for a week. Both get recorded against this ADR when their phases hit them.
+
+---
+
+## ADR-0014: Database network attachment is shared bootstrap, not per claim
+
+Status: Accepted for AWS (validated 2026-09-30)
+
+Context. ADR-0008 puts networking in bootstrap and says each Composition implements the intent "reachable only from the platform network" in its own cloud primitive. On AWS that primitive is a security group plus an RDS subnet group. The obvious design gives every Database claim its own security group. That rule would be identical on every claim (tcp/5432 from the VPC CIDR), so per-claim groups add no isolation, while they require provider-aws-ec2 on the control plane (roughly 300 MiB on a 4 GiB VM, ADR-0010) and ec2 write permissions on the provider role.
+
+Decision. bootstrap/aws/network creates one security group per engine (idp-platform-us-east-postgres: tcp/5432 from the VPC CIDR, no egress) and one RDS subnet group (idp-platform-us-east) across the private subnets. The xdatabase-aws Composition attaches every instance to both, reading their IDs from the platform-regions EnvironmentConfig, so the XRD never sees them. The provider role gets RDS instance lifecycle on the idp- identifier prefix only, with creation gated on aws:RequestTag/Project and changes gated on aws:ResourceTag/Project, and no ec2 write access at all.
+
+Consequences. Smaller control plane and a smaller blast radius for the provider role. The trade is no network isolation between two databases inside the platform VPC: any workload in the VPC can reach any platform Postgres port, and authentication is the only barrier between tenants. If a tenant needs isolation from other tenants, the fix is per-claim security groups sourced from that tenant's workload group, which reintroduces provider-aws-ec2 and scoped ec2 permissions. Two IAM leaks surfaced while scoping the role: CreateDBInstance and ModifyDBInstance authorize against the subnet group, parameter group, and option group ARNs as well as the instance, so those ARNs are pinned in the policy and a new Postgres major version is a reviewed IAM diff; and the RDS service-linked role must already exist, because the permissions boundary denies all IAM. A third leak appeared on the first live reconcile: before it knows an instance's resource ID the provider looks it up by filter, so AWS evaluates DescribeDBInstances against db:* rather than the prefix. The policy grants that single read-only action on arn:aws:rds:us-east-1:<account>:db:*, not on *, and every write stays prefix and tag scoped. Validated with iam simulate-principal-policy: tagged create on the prefix allowed; untagged create, other prefixes, untagged deletes, other regions, other subnet groups, ec2 writes, IAM, and Aurora clusters denied.
+
+---
+
 ## ADR-0013: Providers come from crossplane-contrib, not the Upbound registry
 
 Status: Accepted
@@ -55,7 +140,7 @@ Context. ADR-0007 assumes an always-on K3s control plane. No always-on host is a
 Decision. Run K3s in a Lima VM (Apple Virtualization framework, arm64 Ubuntu 24.04, 4 vCPU, 4 GiB, 20 GiB sparse disk) defined in bootstrap/k3s/lima and configured by the Ansible playbook in bootstrap/k3s/ansible. The VM has no host mounts so provider pods cannot see local cloud credentials, and only the Kubernetes API is forwarded to the Mac, bound to localhost. Install components by phase rather than all at once to fit in 4 GiB. Rules that follow:
 
 - Never stop the VM or close the laptop while cloud resources exist. The Makefile refuses to stop or delete the VM while any Crossplane managed resource exists, and per-cloud budget alerts are the backstop.
-- Every Composition sets deterministic external names on its managed resources, so a rebuilt control plane re-adopts existing cloud resources from the XRs in git instead of orphaning them.
+- Every Composition sets deterministic external names on its managed resources, so a rebuilt control plane re-adopts existing cloud resources from the XRs in git instead of orphaning them. Amended by ADR-0017: where the provider assigns the external name (RDS), the Composition sets a deterministic identifier instead and re-adoption is a lookup.
 - The same playbook targets an always-on host later. Moving hosts means copying the K3s service account signing key, or republishing the JWKS, and the cloud trusts from ADR-0001 keep working.
 
 Consequences. Zero standing cost and fast iteration. Reconciliation pauses whenever the laptop sleeps, so drift correction and deletion only happen while it is awake. Backstage is not linkable between demos, which ADR-0007 listed as a benefit; that returns when the control plane moves to an always-on host. Memory is the binding constraint and will shape how many providers run concurrently. Measured at the end of Phase 0: K3s, Crossplane, provider-family-aws, provider-aws-s3, and provider-family-azure use about 2.3 GiB of the 4 GiB VM with one active managed resource type per cloud. The stop guard was tested by creating a Bucket and running make vm-stop, which refused.
@@ -70,13 +155,13 @@ Context. The original design used Crossplane v1 claims and writeConnectionSecret
 
 Decision. Use Crossplane v2. XRDs are namespaced, and developers create XRs directly in their team namespace. Where this repo says claim, it means a namespaced XR. Connection details are produced by composing a Kubernetes Secret in the function pipeline, into the XR's own namespace. Only the managed resource types a phase needs are activated, which keeps CRD count and API server memory down on the small control plane (ADR-0010).
 
-Consequences. Follows the supported model instead of a legacy path. Namespace becomes the tenancy and RBAC boundary for both the XR and its Secret, which strengthens the least-privilege-connsecret control. ADR-0002's mechanism changes from writeConnectionSecretToRef to a composed Secret; its External Secrets deferral stands. Kyverno policies match the XR kinds instead of claim kinds.
+Consequences. Follows the supported model instead of a legacy path. Namespace becomes the tenancy and RBAC boundary for both the XR and its Secret, which strengthens the least-privilege-connsecret control. ADR-0002's mechanism changes from writeConnectionSecretToRef to a composed Secret; its External Secrets deferral stands. Kyverno policies match the XR kinds instead of claim kinds. Operational note from Phase 1: Crossplane v2 keeps a provider's deployment at zero replicas until at least one of its ManagedResourceDefinitions is active, so the MRAP must be applied before waiting for a new provider's pod.
 
 ---
 
 ## ADR-0008: Networking is a bootstrap concern, private by default, no per-claim NAT
 
-Status: Proposed
+Status: Accepted for AWS (validated 2026-09-30). Proposed for Azure and GCP until their phases.
 
 Context. Networking is the largest leaky abstraction across the three clouds (AWS VPC and security groups, Azure VNet and NSGs, GCP VPC network and firewall rules are all modeled differently) and it is also a primary security and cost surface. Two failure modes to avoid: leaking cloud network primitives into the cloud-agnostic API, and letting each claim create its own VPC and NAT gateway, which is both sprawl and the main cost landmine from ADR-0004.
 
@@ -90,6 +175,8 @@ Posture:
 - Verification without public exposure. The database phase done-criteria (READY=True, connection secret exists) does not require the K3s control plane to reach a private database, so no public path is opened for verification. A true end-to-end connect test runs from inside the cloud network (a throwaway job in the provisioned xcluster or a bastion), not from K3s over the internet.
 
 Consequences. Claims stay cheap and cloud-agnostic, no VPC or NAT sprawl, and the private-by-default posture maps directly to the compliance controls. The cost of shared bootstrap networking is that it is created and destroyed as a unit per cloud, so a demo cycle stands up the network with the first claim and tears it down after the last. The security-group versus NSG versus firewall-rule difference is a known abstraction leak: the XRD carries intent, each Composition carries the implementation, and each new leak gets its own note here. Marked Proposed until validated in the AWS phase, then updated to Accepted with the concrete endpoint and egress mechanism per cloud.
+
+AWS, validated 2026-09-30 (bootstrap/aws/network): VPC 10.60.0.0/16 with two private /20 subnets in us-east-1a and us-east-1b, no internet gateway, no NAT gateway, and a route table holding only the local route and the S3 gateway endpoint. The default security group is adopted with zero rules. Egress mechanism: gateway endpoints only; RDS needs no endpoint because the provider calls the RDS API from K3s, not from inside the VPC. VPC flow logs (ALL traffic) go to CloudWatch with 7 day retention and the managed key, which avoids a standing CMK charge. Standing cost is $0 per month. Database attachment is shared bootstrap per ADR-0014.
 
 ---
 
@@ -166,6 +253,8 @@ Context. Each cloud names regions differently (us-east-1, eastus, us-east1). Acc
 Decision. The XRD exposes platform regions (for example us-east). A single platform-region map translates to the per-cloud region in each Composition. The map lives in one place via an EnvironmentConfig rather than being duplicated inside every Composition. Cloud SKU names and cloud region strings never appear in the XRD.
 
 Consequences. Developers pick a platform region and get the right cloud region underneath. The map is the one place to maintain region coverage. Adds an EnvironmentConfig dependency to the bootstrap. Regions that do not exist in every cloud must be handled explicitly in the map, which is itself a leak to record when it happens.
+
+Implementation, 2026-09-30: the map is the cluster-scoped EnvironmentConfig platform-regions (crossplane/environment/platform-regions.yaml), loaded into each Composition pipeline by function-environment-configs. Each platform region entry carries the cloud region plus that cloud's shared network attachment from bootstrap (ADR-0014), so bootstrap outputs reach Compositions without touching the XRD. The XRD's region field is an enum of platform regions and is immutable after creation; adding a region is one enum value in the XRD plus one map entry. A known pending leak: this Azure subscription has previously been restricted from Postgres Flexible Server in eastus, so us-east may have to map to a different Azure region than its name suggests. Phase 3 confirms or resolves it here.
 
 ---
 
