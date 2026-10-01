@@ -11,10 +11,16 @@ resource "azurerm_consumption_budget_subscription" "idp_platform" {
     start_date = var.start_date
   }
 
+  # Filtered on the platform's resource groups, not the Project tag. A tag
+  # filter only sees spend on resources that carry the tag, so an untagged
+  # resource would bill without tripping the alert. Every platform resource
+  # lives in one of these groups, the Azure equivalent of the dedicated GCP
+  # project the GCP budget filters on (ADR-0004).
   filter {
-    tag {
-      name   = "Project"
-      values = ["idp-platform"]
+    dimension {
+      name     = "ResourceGroupName"
+      operator = "In"
+      values   = var.resource_group_names
     }
   }
 

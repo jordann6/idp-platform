@@ -1,0 +1,20 @@
+# Written by the Backstage Database template next to the claim it describes.
+# The team owns the entity; the requester is recorded separately because guest
+# sign-in means every requester is guest for now (ADR-0019).
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: ${{ values.namespace }}-${{ values.name }}
+  title: ${{ values.name }}
+  description: PostgreSQL database ${{ values.name }} for ${{ values.namespace }}, delivered by the Database template.
+  annotations:
+    backstage.io/source-location: url:https://github.com/jordann6/idp-platform/tree/main/claims/${{ values.namespace }}/
+    platform.jordandesigns.io/claim: claims/${{ values.namespace }}/${{ values.name }}.yaml
+    platform.jordandesigns.io/cloud: ${{ values.cloud }}
+    platform.jordandesigns.io/requested-by: ${{ values.owner }}
+  tags:
+    - postgres
+    - ${{ values.cloud }}
+spec:
+  type: database
+  owner: group:default/${{ values.namespace }}

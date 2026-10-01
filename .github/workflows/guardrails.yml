@@ -17,6 +17,14 @@ permissions:
   contents: read
 
 jobs:
+  # Same check as the claim-entities-paired pre-commit hook, because local
+  # hooks can be skipped with --no-verify.
+  claim-entities:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/check-claim-entities.sh
+
   static:
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:

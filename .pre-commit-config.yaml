@@ -67,3 +67,12 @@ repos:
         language: pygrep
         entry: '(?i)\b(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
         exclude: \.terraform\.lock\.hcl$
+
+      # A Database claim and its Backstage catalog entity are added and
+      # removed together.
+      - id: claim-entities-paired
+        name: Claims and catalog entities are paired
+        language: script
+        entry: scripts/check-claim-entities.sh
+        pass_filenames: false
+        always_run: true
