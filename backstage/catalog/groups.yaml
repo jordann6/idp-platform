@@ -30,3 +30,14 @@ metadata:
 spec:
   type: team
   children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: team-ops
+  description: Phase 3 demo team whose workloads live on Azure. Its Kubernetes namespace has the same name.
+  annotations:
+    platform.jordandesigns.io/default-cloud: azure
+spec:
+  type: team
+  children: []
