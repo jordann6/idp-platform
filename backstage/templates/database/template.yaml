@@ -1,4 +1,5 @@
-# Paved-road Database. Renders one namespaced XR into claims/<team>/ and opens
+# Paved-road Database. Renders one namespaced XR into claims/<team>/, plus its
+# catalog Resource entity under backstage/catalog/resources/<team>/, and opens
 # a pull request; it never pushes to a path Argo syncs (CLAUDE.md, change
 # management). The cloud comes from the team's catalog entry (ADR-0012), and
 # every field mirrors a rule in the xdatabase XRD so bad input fails here.
@@ -59,8 +60,8 @@ spec:
       name: Render claim
       action: fetch:template
       input:
-        url: ./skeleton
-        targetPath: ./claim
+        url: ./skeleton-claim
+        targetPath: ./out/claims/${{ steps.team.output.entity.metadata.name }}
         values:
           name: ${{ parameters.name }}
           namespace: ${{ steps.team.output.entity.metadata.name }}
@@ -68,6 +69,20 @@ spec:
           size: ${{ parameters.size }}
           environment: ${{ parameters.environment }}
           costCenter: ${{ parameters.costCenter }}
+          owner: ${{ user.ref | parseEntityRef | pick('name') }}
+
+    # The catalog entry for the Database rides in the same pull request, so a
+    # Database and its catalog entity are merged, and torn down, together.
+    - id: entity
+      name: Render catalog entity
+      action: fetch:template
+      input:
+        url: ./skeleton-entity
+        targetPath: ./out/backstage/catalog/resources/${{ steps.team.output.entity.metadata.name }}
+        values:
+          name: ${{ parameters.name }}
+          namespace: ${{ steps.team.output.entity.metadata.name }}
+          cloud: ${{ steps.team.output.entity.metadata.annotations['platform.jordandesigns.io/default-cloud'] }}
           owner: ${{ user.ref | parseEntityRef | pick('name') }}
 
     - id: pr
@@ -86,9 +101,8 @@ spec:
           Environment: ${{ parameters.environment }}
           Cost center: ${{ parameters.costCenter }}
 
-          Merging this PR lets Argo CD create the Database. Closing it creates nothing.
-        sourcePath: ./claim
-        targetPath: claims/${{ steps.team.output.entity.metadata.name }}
+          Merging this PR lets Argo CD create the Database and adds it to the catalog. Closing it creates nothing. To tear it down later, remove both files in one pull request.
+        sourcePath: ./out
 
   output:
     links:

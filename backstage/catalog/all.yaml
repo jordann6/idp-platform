@@ -8,3 +8,5 @@ spec:
   targets:
     - ./groups.yaml
     - ../templates/database/template.yaml
+    # One Resource entity per provisioned Database, written by the template.
+    - ./resources/*/*.yaml
