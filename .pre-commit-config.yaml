@@ -58,3 +58,12 @@ repos:
         language: pygrep
         entry: 'idp-platform-[0-9a-f]{4}\b|projects/[0-9]{9,}'
         exclude: \.terraform\.lock\.hcl$
+
+      # Same rule for Azure: subscription, tenant, and client IDs come from
+      # Terraform outputs and gitignored tfvars. Any GUID is blocked except
+      # the all-zero placeholder used in example.tfvars.
+      - id: no-azure-ids
+        name: No Azure subscription, tenant, or client IDs
+        language: pygrep
+        entry: '(?i)\b(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+        exclude: \.terraform\.lock\.hcl$

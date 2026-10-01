@@ -17,11 +17,17 @@ data:
     region: us-east-1
     dbSubnetGroupName: idp-platform-us-east
     postgresSecurityGroupId: sg-0643f6eadb6f30e4c
-  # Unvalidated until Phase 3. This subscription has been restricted from
-  # Postgres Flexible Server in eastus before; if that holds, us-east maps to a
-  # different Azure region here and the leak is recorded in ADR-0003.
+  # Outputs of bootstrap/azure/network. eastus is restricted for Postgres
+  # Flexible Server on this subscription, so us-east maps to eastus2 (ADR-0003).
+  # Names only: the subscription ID lives in the platform-azure-subscription
+  # EnvironmentConfig that make azure-provider applies from Terraform outputs.
   azure:
-    region: eastus
+    region: eastus2
+    dataResourceGroup: rg-idp-platform-us-east-data
+    networkResourceGroup: rg-idp-platform-us-east-network
+    vnetName: vnet-idp-platform-us-east
+    postgresSubnetName: snet-postgres
+    privateDnsZoneName: privatelink.postgres.database.azure.com
   # Outputs of bootstrap/gcp/network. The project ID is not here: it lives in
   # the platform-gcp-project EnvironmentConfig that make gcp-adc applies from
   # Terraform outputs, so this synced file carries no GCP account identifier.
