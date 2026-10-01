@@ -1,0 +1,33 @@
+# Phase 0 verification for GCP (ADR-0001): a trivial, empty, private bucket
+# proves the federated identity works before any real GCP resource exists.
+# The name is filled in by make gcp-verify from crossplane-auth outputs.
+# Bucket names are global, so the external name is the name itself and a
+# rebuilt control plane re-adopts it automatically (ADR-0017).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: idp-verify
+---
+apiVersion: storage.gcp.m.upbound.io/v1beta2
+kind: Bucket
+metadata:
+  name: verify
+  namespace: idp-verify
+  annotations:
+    crossplane.io/external-name: __VERIFY_BUCKET_NAME__
+spec:
+  forProvider:
+    location: US-EAST1
+    uniformBucketLevelAccess: true
+    publicAccessPrevention: enforced
+    softDeletePolicy:
+      retentionDurationSeconds: 0
+    labels:
+      project: idp-platform
+      environment: verify
+      owner: jordan
+      managed-by: crossplane
+      cost_center: cc-1001
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: gcp
