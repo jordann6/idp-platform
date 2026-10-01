@@ -1,0 +1,13 @@
+# Every Database the template provisions joins this System. The file also
+# keeps the resources glob from ever matching nothing: an empty match is a read
+# error, and Backstage then keeps a failed Location's previous entities instead
+# of deleting the ones whose files are gone (ADR-0019). Directories starting
+# with an underscore are platform files, not team claims.
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: databases
+  title: Databases
+  description: PostgreSQL databases provisioned through the paved-road Database template.
+spec:
+  owner: group:default/platform

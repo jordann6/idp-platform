@@ -18,3 +18,4 @@ metadata:
 spec:
   type: database
   owner: group:default/${{ values.namespace }}
+  system: databases
