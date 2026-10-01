@@ -1,0 +1,11 @@
+# ADR-0003: the GCP project ID the Compositions need to build resource paths.
+# Applied by make gcp-adc from Terraform outputs, never synced by Argo, so the
+# identifier stays out of git the same way the AWS account ID does (ADR-0018).
+# Kept in a subdirectory so the platform-apis Application does not pick it up.
+apiVersion: apiextensions.crossplane.io/v1beta1
+kind: EnvironmentConfig
+metadata:
+  name: platform-gcp-project
+data:
+  gcpProject:
+    id: __GCP_PROJECT_ID__

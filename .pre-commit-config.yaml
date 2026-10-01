@@ -50,3 +50,11 @@ repos:
         language: pygrep
         entry: 'arn:aws[a-z-]*:[a-z0-9-]*:[a-z0-9-]*:[0-9]{12}:'
         exclude: \.terraform\.lock\.hcl$
+
+      # Same rule for GCP: the platform project ID (random suffix) and number
+      # come from Terraform outputs at apply time.
+      - id: no-gcp-project-ids
+        name: No GCP platform project IDs
+        language: pygrep
+        entry: 'idp-platform-[0-9a-f]{4}\b|projects/[0-9]{9,}'
+        exclude: \.terraform\.lock\.hcl$

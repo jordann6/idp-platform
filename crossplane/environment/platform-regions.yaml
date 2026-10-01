@@ -22,6 +22,10 @@ data:
   # different Azure region here and the leak is recorded in ADR-0003.
   azure:
     region: eastus
-  # Unvalidated until Phase 2.
+  # Outputs of bootstrap/gcp/network. The project ID is not here: it lives in
+  # the platform-gcp-project EnvironmentConfig that make gcp-adc applies from
+  # Terraform outputs, so this synced file carries no GCP account identifier.
   gcp:
     region: us-east1
+    networkName: idp-platform-us-east
+    allocatedIpRange: idp-platform-us-east-psa

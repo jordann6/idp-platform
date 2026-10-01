@@ -1,0 +1,359 @@
+# xdatabase on GCP: Cloud SQL for PostgreSQL, smallest tier by default, private
+# IP only. Pipeline: load the platform region entry and the project ID, compose
+# the admin password Secret, compose the instance, database, and user, patch
+# the endpoint back to the XR, compose the uniform connection Secret, then mark
+# readiness. The network attachment comes from bootstrap (ADR-0008).
+#
+# External names (ADR-0017), from provider-upjet-gcp config/externalname.go:
+# DatabaseInstance, Database, and User all use their name as the external name.
+# The Composition sets each one explicitly, so a rebuilt control plane re-adopts
+# existing Cloud SQL resources from the XRs in git with no lookup step.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xdatabase-gcp
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    platform.jordandesigns.io/cloud: gcp
+spec:
+  compositeTypeRef:
+    apiVersion: platform.jordandesigns.io/v1alpha1
+    kind: Database
+  mode: Pipeline
+  pipeline:
+    - step: load-platform-region
+      functionRef:
+        name: function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Selector
+              selector:
+                mode: Single
+                matchLabels:
+                  - key: platform.jordandesigns.io/region
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.region
+            # Applied by make gcp-adc from Terraform outputs, not from git.
+            - type: Reference
+              ref:
+                name: platform-gcp-project
+
+    # ADR-0020: the GCP provider has no equivalent of autoGeneratePassword, so
+    # the platform generates the admin password. It is generated once and then
+    # carried forward from the observed Secret on every later reconcile, so it
+    # never rotates by accident.
+    - step: compose-password
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $observed := dig "observed" "resources" "admin-password" "resource" "data" "password" "" . }}
+            ---
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: {{ printf "%s-sqluser" $xr.metadata.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: admin-password
+                gotemplating.fn.crossplane.io/ready: "True"
+              labels:
+                platform.jordandesigns.io/database: {{ $xr.metadata.name }}
+            type: Opaque
+            data:
+              password: {{ if $observed }}{{ $observed }}{{ else }}{{ randAlphaNum 32 | b64enc }}{{ end }}
+
+    - step: compose-cloudsql
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: sql-instance
+            base:
+              apiVersion: sql.gcp.m.upbound.io/v1beta1
+              kind: DatabaseInstance
+              metadata:
+                labels:
+                  platform.jordandesigns.io/component: sql-instance
+              spec:
+                providerConfigRef:
+                  kind: ClusterProviderConfig
+                  name: gcp
+                forProvider:
+                  # ADR-0004: nothing survives deletion, no HA, no backups.
+                  deletionProtection: false
+                  settings:
+                    # Postgres 16 and later default to Enterprise Plus, which
+                    # rejects the shared-core tiers the small size maps to.
+                    edition: ENTERPRISE
+                    availabilityType: ZONAL
+                    diskType: PD_SSD
+                    diskAutoresize: false
+                    deletionProtectionEnabled: false
+                    retainBackupsOnDelete: false
+                    backupConfiguration:
+                      enabled: false
+                      pointInTimeRecoveryEnabled: false
+                    # deny-public-database and require-tls-in-transit.
+                    ipConfiguration:
+                      ipv4Enabled: false
+                      sslMode: ENCRYPTED_ONLY
+                    userLabels:
+                      project: idp-platform
+                      managed-by: crossplane
+            patches:
+              # Deterministic name, which is also the external name. The IAM
+              # condition only allows instances with the idp- prefix. Cloud SQL
+              # holds a deleted name for about a week (ADR-0015).
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: metadata.namespace
+                    - fromFieldPath: metadata.name
+                  strategy: string
+                  string:
+                    fmt: "idp-%s-%s"
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+              - type: FromEnvironmentFieldPath
+                fromFieldPath: gcp.region
+                toFieldPath: spec.forProvider.region
+              - type: CombineFromEnvironment
+                combine:
+                  variables:
+                    - fromFieldPath: gcpProject.id
+                    - fromFieldPath: gcp.networkName
+                  strategy: string
+                  string:
+                    fmt: "projects/%s/global/networks/%s"
+                toFieldPath: spec.forProvider.settings.ipConfiguration.privateNetwork
+              - type: FromEnvironmentFieldPath
+                fromFieldPath: gcp.allocatedIpRange
+                toFieldPath: spec.forProvider.settings.ipConfiguration.allocatedIpRange
+
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.engineVersion
+                toFieldPath: spec.forProvider.databaseVersion
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "POSTGRES_%s"
+
+              # T-shirt sizes to Cloud SQL tiers. Only this file knows them.
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.size
+                toFieldPath: spec.forProvider.settings.tier
+                transforms:
+                  - type: map
+                    map:
+                      small: db-f1-micro
+                      medium: db-g1-small
+                      large: db-custom-2-7680
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.size
+                toFieldPath: spec.forProvider.settings.diskSize
+                transforms:
+                  - type: map
+                    map:
+                      small: 20
+                      medium: 50
+                      large: 100
+
+              # Required labels (require-tags control). GCP label keys must be
+              # lowercase, so the AWS tag keys are rendered in snake case.
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.owner
+                toFieldPath: spec.forProvider.settings.userLabels.owner
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.costCenter
+                toFieldPath: spec.forProvider.settings.userLabels.cost_center
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.environment
+                toFieldPath: spec.forProvider.settings.userLabels.environment
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.settings.userLabels.team
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.settings.userLabels.database
+
+              # Cloud-neutral status for consumers. Cloud SQL reports an IP,
+              # not a hostname, and never reports a port (ADR-0020).
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.privateIpAddress
+                toFieldPath: status.endpoint
+
+          # RDS creates the database and admin user inside the instance
+          # resource; Cloud SQL models them as separate resources (ADR-0020).
+          # ABANDON on both: deleting the instance removes them, and Postgres
+          # refuses to drop a role that owns objects.
+          - name: sql-database
+            base:
+              apiVersion: sql.gcp.m.upbound.io/v1beta1
+              kind: Database
+              metadata:
+                labels:
+                  platform.jordandesigns.io/component: sql-database
+                annotations:
+                  crossplane.io/external-name: app
+              spec:
+                providerConfigRef:
+                  kind: ClusterProviderConfig
+                  name: gcp
+                forProvider:
+                  deletionPolicy: ABANDON
+            patches:
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: metadata.namespace
+                    - fromFieldPath: metadata.name
+                  strategy: string
+                  string:
+                    fmt: "idp-%s-%s"
+                toFieldPath: spec.forProvider.instance
+
+          - name: sql-user
+            base:
+              apiVersion: sql.gcp.m.upbound.io/v1beta1
+              kind: User
+              metadata:
+                labels:
+                  platform.jordandesigns.io/component: sql-user
+                annotations:
+                  crossplane.io/external-name: app_admin
+              spec:
+                providerConfigRef:
+                  kind: ClusterProviderConfig
+                  name: gcp
+                forProvider:
+                  type: BUILT_IN
+                  deletionPolicy: ABANDON
+                  passwordSecretRef:
+                    key: password
+            patches:
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: metadata.namespace
+                    - fromFieldPath: metadata.name
+                  strategy: string
+                  string:
+                    fmt: "idp-%s-%s"
+                toFieldPath: spec.forProvider.instance
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.passwordSecretRef.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-sqluser"
+
+    # ADR-0020: the instance must outlive its database and user. When the XR is
+    # deleted every composed resource is deleted at once; if the instance goes
+    # first, the provider's observe of the user fails with instanceDoesNotExist
+    # instead of reporting it gone, and the User finalizer never clears
+    # (observed on the first live teardown). A Usage blocks deleting the
+    # instance until the dependents are gone, and replayDeletion retries it.
+    - step: compose-usages
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- range $dependent := list "sql-database" "sql-user" }}
+            ---
+            apiVersion: protection.crossplane.io/v1beta1
+            kind: Usage
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ printf "usage-%s" $dependent }}
+                gotemplating.fn.crossplane.io/ready: "True"
+            spec:
+              replayDeletion: true
+              reason: Cloud SQL databases and users must be deleted before their instance.
+              of:
+                apiVersion: sql.gcp.m.upbound.io/v1beta1
+                kind: DatabaseInstance
+                resourceSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    platform.jordandesigns.io/component: sql-instance
+              by:
+                apiVersion: sql.gcp.m.upbound.io/v1beta1
+                kind: {{ ternary "Database" "User" (eq $dependent "sql-database") }}
+                resourceSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    platform.jordandesigns.io/component: {{ $dependent }}
+            {{- end }}
+
+    # ADR-0016: the consumer Secret has the same six keys on every cloud. It is
+    # always composed but reports ready only once the host exists and the user
+    # (and so the password) is live on the instance, so XR Ready implies a
+    # usable Secret.
+    - step: compose-connection-secret
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $secretName := printf "%s-conn" $xr.metadata.name }}
+            {{- $address := dig "observed" "resources" "sql-instance" "resource" "status" "atProvider" "privateIpAddress" "" . }}
+            {{- $password := dig "observed" "resources" "admin-password" "resource" "data" "password" "" . }}
+            {{- $userReady := false }}
+            {{- range (dig "observed" "resources" "sql-user" "resource" "status" "conditions" list .) }}
+            {{- if and (eq .type "Ready") (eq .status "True") }}{{ $userReady = true }}{{ end }}
+            {{- end }}
+            {{- $complete := and $address $password $userReady }}
+            ---
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: {{ $secretName }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: connection-secret
+                gotemplating.fn.crossplane.io/ready: {{ ternary "True" "False" (not (not $complete)) | quote }}
+              labels:
+                platform.jordandesigns.io/database: {{ $xr.metadata.name }}
+            type: Opaque
+            data:
+              username: {{ "app_admin" | b64enc }}
+              dbname: {{ "app" | b64enc }}
+              sslmode: {{ "require" | b64enc }}
+              port: {{ "5432" | b64enc }}
+              {{- if $address }}
+              host: {{ $address | b64enc }}
+              {{- end }}
+              {{- if $password }}
+              password: {{ $password }}
+              {{- end }}
+            ---
+            apiVersion: {{ $xr.apiVersion }}
+            kind: {{ $xr.kind }}
+            status:
+              connectionSecret: {{ $secretName }}
+              port: 5432
+
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready

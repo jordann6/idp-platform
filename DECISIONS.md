@@ -8,6 +8,25 @@ Format: Context, Decision, Consequences.
 
 ---
 
+## ADR-0020: Cloud SQL leaks into the Database contract in five places
+
+Status: Accepted (validated live 2026-09-30)
+
+Context. Phase 2 exists to find AWS assumptions in the xdatabase API. Writing xdatabase-gcp against the same XRD and the same six-key Secret (ADR-0016) exposed where RDS and Cloud SQL differ, both in the cloud model and in the provider implementation.
+
+Decision and the leak behind each part.
+
+- Password generation. provider-upjet-aws offers autoGeneratePassword on the RDS Instance; provider-upjet-gcp has no equivalent on the Cloud SQL User. The Composition therefore generates the admin password itself with function-go-templating, writes it to an internal <name>-sqluser Secret, and carries the observed value forward on every reconcile so it is generated exactly once. Verified live: the password hash was unchanged across a forced reconcile, and the consumer Secret's password matched the internal Secret.
+- Resource shape. RDS creates the database and admin user inside the instance resource; Cloud SQL models them as separate Database and User resources that reference the instance by name. Both are composed with deletionPolicy ABANDON, because deleting the instance removes them and Postgres refuses to drop a role that owns objects.
+- Deletion order. When an XR is deleted, Crossplane deletes every composed resource at once. On the first live teardown the instance went first, after which the provider's observe of the User returned instanceDoesNotExist as an error instead of reporting the user gone, and the User finalizer never cleared. The instance was confirmed deleted in GCP before the finalizer was removed by hand. The Composition now composes two Usages (instance used by database, instance used by user) with replayDeletion, so the instance cannot be deleted until its dependents are gone. AWS needed none of this because RDS is one resource.
+- Endpoint and port. RDS reports a DNS hostname and a port; Cloud SQL reports a private IP and never reports a port. The XRD said the endpoint was a hostname, which was an AWS assumption, so the XRD description now says an address that may be a DNS name or an IP, and the Composition sets status.port and the Secret's port to 5432 itself. Fixed in the XRD per CLAUDE.md, not hidden in the Composition.
+- Defaults that are not the smallest tier. Postgres 16 and later default to the Enterprise Plus edition on Cloud SQL, which rejects the shared-core tiers, so the Composition sets edition ENTERPRISE explicitly. TLS is enforced server side with sslMode ENCRYPTED_ONLY, matching the sslmode=require the Secret advertises and the RDS Postgres 17 default of rds.force_ssl.
+- IAM scoping. Cloud SQL supplies resource.name to IAM conditions for instance permissions but not for database and user permissions: with a prefix condition on all three, users.create, users.list, and databases.get were denied on an idp- instance, as the Data Access audit log showed. Instance lifecycle stays conditioned on the idp- prefix; database and user lifecycle is granted unconditioned in the dedicated project. Separately, Cloud SQL answers 403, not 404, for databases and users of an instance that does not exist yet, so the first reconciles of a new Database look like permission errors until the instance is up.
+
+Consequences. The developer-facing API is unchanged apart from a corrected endpoint description, and the six-key Secret is identical across clouds. The GCP Composition carries more machinery than the AWS one (a password step, two Usages, three managed resources instead of one), which is the cost of the uniform contract. The generated password lives only in Kubernetes Secrets, as on AWS (ADR-0002). Live proof, 2026-09-30: team-demo/db-gcp-a reached READY and SYNCED; db-gcp-a-conn held exactly the six keys with host 10.71.0.3; GCP showed POSTGRES_17, ENTERPRISE, db-f1-micro, ZONAL, 20 GB PD_SSD, backups off, deletion protection off, private IP only on the platform network and PSA range, ENCRYPTED_ONLY, and every required label.
+
+---
+
 ## ADR-0019: Backstage runs slim on the laptop, and its GitHub access is a repo-scoped token
 
 Status: Accepted (validated 2026-09-30)
@@ -53,19 +72,19 @@ Context. ADR-0010 says every Composition sets a deterministic external name, so 
 
 Decision. The Composition sets spec.forProvider.identifier to idp-<namespace>-<name> and leaves the external name to the provider. Which external-name strategy a resource uses is checked in the provider's config/externalname.go before its Composition is written, and each Composition's comment says which it is.
 
-Consequences. The identifier is still deterministic, so a rebuilt control plane cannot create a duplicate: a fresh MR fails with DBInstanceAlreadyExists instead of orphaning a second billed database. Re-adoption becomes a manual lookup: read the DbiResourceId with aws rds describe-db-instances --db-instance-identifier idp-<namespace>-<name>, and set it as the crossplane.io/external-name annotation on the new Instance MR. This procedure is written down but has not been exercised against a rebuilt control plane. Resources whose provider uses the name as the external name (for example the S3 Bucket in Phase 0) keep the automatic re-adoption ADR-0010 describes. This is a per-resource leak of the provider implementation into the platform's recovery story, and every new Composition must record which kind it is.
+Consequences. The identifier is still deterministic, so a rebuilt control plane cannot create a duplicate: a fresh MR fails with DBInstanceAlreadyExists instead of orphaning a second billed database. Re-adoption becomes a manual lookup: read the DbiResourceId with aws rds describe-db-instances --db-instance-identifier idp-<namespace>-<name>, and set it as the crossplane.io/external-name annotation on the new Instance MR. This procedure is written down but has not been exercised against a rebuilt control plane. Resources whose provider uses the name as the external name (for example the S3 Bucket in Phase 0) keep the automatic re-adoption ADR-0010 describes. This is a per-resource leak of the provider implementation into the platform's recovery story, and every new Composition must record which kind it is. GCP, Phase 2: DatabaseInstance, Database, and User in provider-upjet-gcp v3.0.0 all use their name as the external name, so xdatabase-gcp sets each explicitly and a rebuilt control plane re-adopts them automatically. AWS is the outlier.
 
 ---
 
 ## ADR-0016: The connection Secret is a platform contract, readiness waits for it
 
-Status: Accepted for AWS (validated live 2026-09-30)
+Status: Accepted for AWS and GCP (validated live 2026-09-30)
 
 Context. ADR-0009 composes the connection Secret in the function pipeline because namespaced XRs have no writeConnectionSecretToRef. Each cloud's provider publishes different connection keys (upjet RDS publishes its own names; Azure and GCP will differ again), so passing a provider's Secret through would leak the cloud into every consumer. A second problem surfaced in crossplane render: function-auto-ready marks the XR Ready once every desired composed resource is ready, so if the Secret is only composed after the password appears, the XR goes Ready before a usable Secret exists.
 
 Decision. Every xdatabase Composition composes a Secret named <xr-name>-conn in the XR namespace with exactly these keys: host, port, username, password, dbname, sslmode. The XR's status.connectionSecret names it. The Secret is always composed and carries the go-templating ready annotation, set True only when host, port, and password are all present, so XR Ready implies a complete Secret. On AWS the provider also writes two internal Secrets in the same namespace: <name>-master (autoGeneratePassword output) and <name>-rds (the MR's own connection details, which is how the password reaches the pipeline).
 
-Consequences. Consumers and the Backstage template depend on one Secret shape regardless of cloud. Three Secrets exist per AWS Database, two of them internal, all namespace scoped (least-privilege-connsecret). The password is still plaintext in Kubernetes Secrets; the External Secrets path in ADR-0002 remains deferred. crossplane render cannot mock composed connection details, so the password branch is only proven live. Live proof, 2026-09-30: Database team-demo/db-demo reached READY and SYNCED in about five minutes; db-demo-conn held exactly the six keys, its password matched the provider's db-demo-master Secret, and the endpoint resolved to a private 10.60.0.0/16 address. AWS showed db.t4g.micro, Postgres 17.9, 20 GiB gp3, not public, encrypted, single AZ, no backups, the shared subnet group and security group, and all required tags.
+Consequences. Consumers and the Backstage template depend on one Secret shape regardless of cloud. Three Secrets exist per AWS Database, two of them internal, all namespace scoped (least-privilege-connsecret). The password is still plaintext in Kubernetes Secrets; the External Secrets path in ADR-0002 remains deferred. crossplane render cannot mock composed connection details, so the password branch is only proven live. Live proof, 2026-09-30: Database team-demo/db-demo reached READY and SYNCED in about five minutes; db-demo-conn held exactly the six keys, its password matched the provider's db-demo-master Secret, and the endpoint resolved to a private 10.60.0.0/16 address. AWS showed db.t4g.micro, Postgres 17.9, 20 GiB gp3, not public, encrypted, single AZ, no backups, the shared subnet group and security group, and all required tags. GCP, 2026-09-30: the same six keys from xdatabase-gcp, with readiness additionally waiting for the Cloud SQL User to be Ready, because on GCP the password only works once the user exists on the instance (ADR-0020).
 
 ---
 
@@ -78,6 +97,8 @@ Context. ADR-0010 requires deterministic external names so a rebuilt control pla
 Decision. The XRD carries a root CEL rule: a Database name is 1 to 30 lowercase letters, digits, or single hyphens, starting with a letter and not ending with a hyphen. With the idp- prefix, this leaves 28 characters for the namespace inside the 63 character RDS limit. Team namespaces follow the same rule by convention until a Kyverno policy enforces it in Phase 5.
 
 Consequences. Developers see a naming error at admission instead of a cloud API error minutes later. The rule is stricter than any single cloud needs, which is the price of one API. Two leaks remain for later phases: Azure global uniqueness will need a suffix that is still deterministic (for example a hash of namespace and name), and GCP name reuse means deleting and recreating a Database with the same name can fail for a week. Both get recorded against this ADR when their phases hit them.
+
+GCP, Phase 2. The Cloud SQL instance name is idp-<namespace>-<name>, and it is also the external name. Cloud SQL holds a deleted instance name for up to a week, so deleting a Database and recreating it with the same name in the same namespace fails for that period. This is documented Cloud SQL behavior and was not exercised live in Phase 2. The platform does not work around it: a suffix would break deterministic re-adoption (ADR-0017), so the name rule stands and the gap is documented. Phase 2 used different names for the direct test (db-gcp-a) and the GitOps test for this reason.
 
 ---
 
@@ -119,7 +140,7 @@ Consequences. The developer experience stays identical across clouds, which is t
 
 ## ADR-0011: Workload identity federation leaks per cloud, and the issuer lives in AWS
 
-Status: Accepted for AWS and Azure (validated 2026-09-30). GCP pending its phase.
+Status: Accepted (AWS and Azure validated 2026-09-30, GCP validated 2026-09-30 in Phase 2)
 
 Context. ADR-0001 federates the K3s service account issuer to all three clouds. Each cloud matches the Kubernetes identity differently. AWS IAM trust policies accept StringLike on the sub claim, so one role can trust every provider-aws service account with a wildcard. GCP Workload Identity Federation evaluates a CEL attribute condition, so a prefix match works. Azure federated identity credentials on a user-assigned managed identity accept only an exact subject, with a limit of 20 credentials per identity. Crossplane generates provider service account names that include the package revision, so exact matching breaks on every provider upgrade.
 
@@ -128,6 +149,8 @@ Decision. Give every provider a fixed service account name through a DeploymentR
 Consequences. Azure and GCP authentication depend on the AWS-hosted issuer being reachable. If CloudFront or the bucket is unavailable, new tokens fail to validate on every cloud. Accepted because the issuer is two static documents on a highly available CDN, and moving it (another CDN, a custom domain) only requires changing the issuer URL and republishing. Rotating the K3s service account signing key requires republishing the JWKS; caching is disabled on the distribution so the new key is served immediately.
 
 A second leak surfaced during validation: in provider-azure v2, ResourceGroup is reconciled by the family provider itself, while in provider-aws every resource type lives in a sub-provider. So which pod carries the cloud identity differs per cloud, and the Azure family provider needs the token mount and a federated credential while the AWS family provider needs neither. The list of provider service accounts per cloud lives in each crossplane-auth module and must track which pods reconcile resources.
+
+GCP, validated in Phase 2. The pool provider's attribute condition is an exact subject list (assertion.sub in [...]), so GCP is held to the Azure tightness even though CEL would allow a prefix. Two further leaks. First, GCP's default allowed audience is the full pool provider resource name, which embeds the project number; the pool instead allows a fixed audience (idp-platform-gcp-wif), so the DeploymentRuntimeConfig in git carries no project identifier, and the project number appears only in the generated ADC config. Second, the GCP family provider serves only ProviderConfig types and makes no cloud calls, so it gets a fixed name but no token, like AWS and unlike Azure. Each GCP sub-provider that reconciles resources needs its own exact subject in the pool condition and its own workloadIdentityUser binding, so installing a new sub-provider is a reviewed Terraform diff before it can authenticate.
 
 ---
 
@@ -161,7 +184,7 @@ Consequences. Follows the supported model instead of a legacy path. Namespace be
 
 ## ADR-0008: Networking is a bootstrap concern, private by default, no per-claim NAT
 
-Status: Accepted for AWS (validated 2026-09-30). Proposed for Azure and GCP until their phases.
+Status: Accepted for AWS and GCP (validated 2026-09-30). Proposed for Azure until its phase.
 
 Context. Networking is the largest leaky abstraction across the three clouds (AWS VPC and security groups, Azure VNet and NSGs, GCP VPC network and firewall rules are all modeled differently) and it is also a primary security and cost surface. Two failure modes to avoid: leaking cloud network primitives into the cloud-agnostic API, and letting each claim create its own VPC and NAT gateway, which is both sprawl and the main cost landmine from ADR-0004.
 
@@ -177,6 +200,8 @@ Posture:
 Consequences. Claims stay cheap and cloud-agnostic, no VPC or NAT sprawl, and the private-by-default posture maps directly to the compliance controls. The cost of shared bootstrap networking is that it is created and destroyed as a unit per cloud, so a demo cycle stands up the network with the first claim and tears it down after the last. The security-group versus NSG versus firewall-rule difference is a known abstraction leak: the XRD carries intent, each Composition carries the implementation, and each new leak gets its own note here. Marked Proposed until validated in the AWS phase, then updated to Accepted with the concrete endpoint and egress mechanism per cloud.
 
 AWS, validated 2026-09-30 (bootstrap/aws/network): VPC 10.60.0.0/16 with two private /20 subnets in us-east-1a and us-east-1b, no internet gateway, no NAT gateway, and a route table holding only the local route and the S3 gateway endpoint. The default security group is adopted with zero rules. Egress mechanism: gateway endpoints only; RDS needs no endpoint because the provider calls the RDS API from K3s, not from inside the VPC. VPC flow logs (ALL traffic) go to CloudWatch with 7 day retention and the managed key, which avoids a standing CMK charge. Standing cost is $0 per month. Database attachment is shared bootstrap per ADR-0014.
+
+GCP, validated 2026-09-30 (bootstrap/gcp/network): custom-mode VPC idp-platform-us-east with one subnet, 10.70.0.0/20 in us-east1, Private Google Access and flow logs on. The default internet route is deleted at creation, the GCP equivalent of having no internet gateway, and there is no Cloud Router or NAT. Egress mechanism: Private Google Access over a single route to private.googleapis.com (199.36.153.8/30), the stand-in for the AWS gateway endpoints. Firewall: explicit logged deny-all ingress and egress at priority 65534, with egress allowed only to tcp/5432 on the Private Service Access range and tcp/443 on the Google API range. Cloud SQL private IP comes from a Private Service Access range (10.71.0.0/20) peered to Google's service producer network. That peering is the GCP-specific leak: the database does not live in the platform VPC at all, and deleting the servicenetworking connection is refused for a while after a Cloud SQL instance is deleted, which would block deleting the network. The connection uses deletion_policy REMOVE_PEERING (google provider 8.1 and later), which removes the peering in that case so teardown completes. Unlike AWS, there is no per-engine security group to attach: Cloud SQL private IP instances are reachable from anything in a peered network, so the firewall rules govern what platform workloads may send, not what the database accepts. Standing cost is $0 per month.
 
 ---
 
@@ -240,6 +265,8 @@ Context. The control plane runs on the existing K3s cluster at near zero margina
 
 Decision. Compositions default to the smallest managed tier, skipFinalSnapshot and equivalents on, HA off, baseline IOPS. Databases are reachable without a per-claim NAT gateway; reuse existing networking or private connectivity that does not require one. The xwebservice load balancer is treated as the main cost line and destroyed with the claim. A small budget alert per cloud catches a forgotten always-on resource.
 
+GCP budget, 2026-09-30 (bootstrap/gcp/budget): $10 per month on the billing account, filtered on the dedicated platform project rather than the project label. A label filter only sees spend on resources that carry the label, so one unlabeled resource would bill without tripping the alert; the project boundary catches everything because the platform owns nothing outside it. Alerts go to the billing account administrators.
+
 Consequences. A single deploy-verify-destroy cycle across all three databases stays well under one dollar. Leaving one database up a full month is roughly fifteen dollars. The design forgoes production availability features by choice, which matches the out-of-scope list. Revisit before any resource is intended to stay up.
 
 ---
@@ -254,7 +281,7 @@ Decision. The XRD exposes platform regions (for example us-east). A single platf
 
 Consequences. Developers pick a platform region and get the right cloud region underneath. The map is the one place to maintain region coverage. Adds an EnvironmentConfig dependency to the bootstrap. Regions that do not exist in every cloud must be handled explicitly in the map, which is itself a leak to record when it happens.
 
-Implementation, 2026-09-30: the map is the cluster-scoped EnvironmentConfig platform-regions (crossplane/environment/platform-regions.yaml), loaded into each Composition pipeline by function-environment-configs. Each platform region entry carries the cloud region plus that cloud's shared network attachment from bootstrap (ADR-0014), so bootstrap outputs reach Compositions without touching the XRD. The XRD's region field is an enum of platform regions and is immutable after creation; adding a region is one enum value in the XRD plus one map entry. A known pending leak: this Azure subscription has previously been restricted from Postgres Flexible Server in eastus, so us-east may have to map to a different Azure region than its name suggests. Phase 3 confirms or resolves it here.
+Implementation, 2026-09-30: the map is the cluster-scoped EnvironmentConfig platform-regions (crossplane/environment/platform-regions.yaml), loaded into each Composition pipeline by function-environment-configs. Each platform region entry carries the cloud region plus that cloud's shared network attachment from bootstrap (ADR-0014), so bootstrap outputs reach Compositions without touching the XRD. The XRD's region field is an enum of platform regions and is immutable after creation; adding a region is one enum value in the XRD plus one map entry. A known pending leak: this Azure subscription has previously been restricted from Postgres Flexible Server in eastus, so us-east may have to map to a different Azure region than its name suggests. Phase 3 confirms or resolves it here. GCP, Phase 2: us-east maps to us-east1 with no restriction. The Cloud SQL private network path embeds the GCP project ID, which is kept out of git like the AWS account ID, so it does not live in this synced map. make gcp-adc applies a second EnvironmentConfig, platform-gcp-project, from Terraform outputs; the GCP Composition loads it by reference next to the region entry and builds the network path from both. It sits under crossplane/environment/bootstrap, which the platform-apis Application does not include, so Argo never manages it.
 
 ---
 
@@ -272,7 +299,7 @@ Consequences. Fast to ship, honest about the tradeoff. The gap between the demo 
 
 ## ADR-0001: Provider authentication and bootstrap secret storage
 
-Status: Accepted for AWS and Azure (validated 2026-09-30). Proposed for GCP.
+Status: Accepted (AWS and Azure validated 2026-09-30, GCP validated 2026-09-30 in Phase 2)
 
 Context. The K3s cluster lives outside all three clouds, so Crossplane needs a way to authenticate to each of them. Long-lived plaintext cloud keys in a Secret, or worse in git, is the single biggest credibility gap for a platform that claims to mimic production. The first draft preferred AWS IAM Roles Anywhere, Azure federated service-principal credentials, and GCP Workload Identity Federation. Roles Anywhere turned out to be a poor fit: the Upbound provider-aws ProviderConfig has no Roles Anywhere credential source, so it would need aws_signing_helper in a custom provider image or sidecar, plus a private CA whose key still has to be stored somewhere.
 
@@ -289,5 +316,6 @@ Consequences. No long-lived cloud credential exists anywhere in the platform run
 - AWS: provider-aws-s3 assumed idp-crossplane-provider-aws through AssumeRoleWithWebIdentity (CloudTrail userName system:serviceaccount:crossplane-system:provider-aws-s3). A namespaced Bucket reached SYNCED and READY and was deleted cleanly. IAM simulation allows CreateBucket only on the verification prefix and denies other buckets, RDS, and IAM. The ProviderConfig uses source WebIdentity with a Filesystem token rather than IRSA, so the role ARN is explicit in the ProviderConfig instead of hidden in pod environment variables.
 - Azure: provider-family-azure authenticated with source OIDCTokenFile against a user-assigned managed identity. A namespaced ResourceGroup reached SYNCED and READY with the required tags and was deleted cleanly.
 - The cluster holds no cloud credential Secret, and no provider pod has an access key or client secret in its environment.
+- GCP (Phase 2, bootstrap/gcp): a dedicated project with Data Access audit logs on, a workload identity pool trusting the K3s issuer, and a service account the federated principals impersonate. The project enforces iam.disableServiceAccountKeyCreation (and sql.restrictPublicIp as defense in depth for deny-public-database). The ClusterProviderConfig uses source InjectedIdentity, so authentication falls to Application Default Credentials, which read an external_account config from the idp-gcp-adc ConfigMap. That config holds only the token file path, the STS audience, and the service account to impersonate, so it is a ConfigMap rather than a Secret, generated by make gcp-adc from Terraform outputs. provider-gcp-storage created a namespaced Bucket that reached SYNCED and READY and was deleted cleanly. The Data Access audit log shows the caller as the provider service account with principalSubject system:serviceaccount:crossplane-system:provider-gcp-storage. A Bucket outside the idp-verify- prefix failed with 403 on storage.buckets.create, which is the IAM condition working.
 
-Accepted for AWS and Azure. GCP stays Proposed until its phase validates Workload Identity Federation.
+Accepted for all three clouds.

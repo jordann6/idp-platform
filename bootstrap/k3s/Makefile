@@ -3,6 +3,7 @@ KUBECONFIG    := $(HOME)/.kube/idp-k3s.yaml
 KCTL          := kubectl --kubeconfig $(KUBECONFIG) --context idp-k3s
 ISSUER_TF     := ../aws/oidc-issuer
 AUTH_TF       := ../aws/crossplane-auth
+GCP_AUTH_TF   := ../gcp/crossplane-auth
 DISCOVERY_DIR := $(ISSUER_TF)/discovery
 
 # Provider Healthy can read True before the runtime pod exists, so also wait
@@ -46,7 +47,8 @@ discovery-docs:
 # billed cloud resources with no controller reconciling them.
 guard-no-managed:
 	@$(KCTL) get --raw /readyz >/dev/null 2>&1 || (echo "Refusing: cluster unreachable, so live managed resources cannot be ruled out. Run make vm-up first." && exit 1)
-	@count=$$($(KCTL) get managed -A --no-headers 2>/dev/null | wc -l | tr -d ' '); \
+	@out=$$($(KCTL) get managed -A -o name) || { echo "Refusing: cannot list managed resources, so live ones cannot be ruled out."; exit 1; }; \
+	count=$$(printf '%s' "$$out" | grep -c . || true); \
 	if [ "$$count" != "0" ]; then echo "Refusing: $$count Crossplane managed resources still exist. Delete XRs first."; exit 1; fi
 
 CROSSPLANE_VERSION := 2.4.2
@@ -91,6 +93,35 @@ azure-verify:
 
 azure-verify-delete:
 	$(KCTL) -n idp-verify delete resourcegroup.azure.m.upbound.io/verify --wait
+
+# Sub-providers installed for the current phase; must match providers.yaml.
+GCP_SUBPROVIDERS := provider-gcp-storage provider-gcp-sql
+
+.PHONY: gcp-provider gcp-adc gcp-verify gcp-verify-delete
+
+# ADR-0001: the external_account config holds no key material, so it is a
+# ConfigMap, generated from crossplane-auth outputs and never committed. The
+# project ID EnvironmentConfig is applied here too, outside Argo (ADR-0003).
+gcp-adc:
+	@terraform -chdir=$(GCP_AUTH_TF) output -raw credential_config > /dev/null
+	terraform -chdir=$(GCP_AUTH_TF) output -raw credential_config | $(KCTL) -n crossplane-system create configmap idp-gcp-adc --from-file=credential-config.json=/dev/stdin --dry-run=client -o yaml | $(KCTL) apply -f -
+	@project=$$(terraform -chdir=$(GCP_AUTH_TF) output -raw project_id) && test -n "$$project" && sed "s|__GCP_PROJECT_ID__|$$project|" ../../crossplane/environment/bootstrap/platform-gcp-project.yaml | $(KCTL) apply -f -
+
+gcp-provider: gcp-adc
+	$(KCTL) apply -f ../../crossplane/providers/gcp/runtime-config.yaml
+	$(KCTL) apply -f ../../crossplane/providers/gcp/providers.yaml
+	$(KCTL) wait provider.pkg.crossplane.io/provider-family-gcp $(addprefix provider.pkg.crossplane.io/,$(GCP_SUBPROVIDERS)) --for=condition=Healthy=True --timeout=600s
+	$(KCTL) apply -f ../../crossplane/providers/gcp/mrap.yaml
+	for p in $(GCP_SUBPROVIDERS); do until $(KCTL) -n crossplane-system get pod -l pkg.crossplane.io/provider=$$p -o name | grep -q .; do sleep 2; done; $(KCTL) -n crossplane-system wait pod -l pkg.crossplane.io/provider=$$p --for=condition=Ready --timeout=600s || exit 1; done
+	@project=$$(terraform -chdir=$(GCP_AUTH_TF) output -raw project_id) && test -n "$$project" && sed "s|__GCP_PROJECT_ID__|$$project|" ../../crossplane/providers/gcp/cluster-provider-config.yaml | $(KCTL) apply -f -
+
+gcp-verify:
+	@bucket=$$(terraform -chdir=$(GCP_AUTH_TF) output -raw verify_bucket_name) && test -n "$$bucket" && sed "s|__VERIFY_BUCKET_NAME__|$$bucket|" ../../crossplane/verify/gcp-bucket.yaml | $(KCTL) apply -f -
+	$(KCTL) -n idp-verify wait bucket.storage.gcp.m.upbound.io/verify --for=condition=Ready --timeout=300s
+	$(KCTL) -n idp-verify get bucket.storage.gcp.m.upbound.io/verify
+
+gcp-verify-delete:
+	$(KCTL) -n idp-verify delete bucket.storage.gcp.m.upbound.io/verify --wait
 
 .PHONY: functions platform-apis
 

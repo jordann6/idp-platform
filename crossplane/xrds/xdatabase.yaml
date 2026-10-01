@@ -90,10 +90,10 @@ spec:
               type: object
               properties:
                 endpoint:
-                  description: Hostname clients connect to, whichever cloud produced it.
+                  description: Address clients connect to, whichever cloud produced it. A DNS name on some clouds and a private IP on others (ADR-0020), so clients must accept either.
                   type: string
                 port:
-                  description: Port clients connect to.
+                  description: Port clients connect to. Set by the Composition when the cloud does not report one.
                   type: integer
                 connectionSecret:
                   description: Name of the Secret in this namespace holding host, port, username, password, and dbname.

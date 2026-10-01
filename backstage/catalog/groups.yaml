@@ -19,3 +19,14 @@ metadata:
 spec:
   type: team
   children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: team-data
+  description: Phase 2 demo team whose workloads live on GCP. Its Kubernetes namespace has the same name.
+  annotations:
+    platform.jordandesigns.io/default-cloud: gcp
+spec:
+  type: team
+  children: []

@@ -1,0 +1,12 @@
+# ADR-0001: workload identity federation with the projected K3s token.
+# InjectedIdentity hands authentication to Application Default Credentials,
+# which read the external_account config mounted by the DeploymentRuntimeConfig.
+# The project ID is filled in by make gcp-provider from Terraform outputs.
+apiVersion: gcp.m.upbound.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: gcp
+spec:
+  projectID: __GCP_PROJECT_ID__
+  credentials:
+    source: InjectedIdentity

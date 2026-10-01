@@ -1,0 +1,117 @@
+# The family provider only serves ProviderConfig types and makes no GCP calls,
+# so it gets a fixed name for uniformity but no token (ADR-0011 second leak).
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-family-gcp
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-family-gcp
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+---
+# ADR-0011: fixed service account name so the workload identity pool can match
+# the subject exactly. The projected token is the only credential; the
+# external_account config in the idp-gcp-adc ConfigMap tells ADC where to find
+# it and which service account to impersonate. No GCP secret exists anywhere.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-gcp-storage
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-gcp-storage
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              env:
+                - name: GOOGLE_APPLICATION_CREDENTIALS
+                  value: /etc/idp-platform/gcp/credential-config.json
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+              volumeMounts:
+                - name: gcp-federated-token
+                  mountPath: /var/run/secrets/idp-platform/gcp
+                  readOnly: true
+                - name: gcp-adc
+                  mountPath: /etc/idp-platform/gcp
+                  readOnly: true
+          volumes:
+            - name: gcp-federated-token
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: idp-platform-gcp-wif
+                      expirationSeconds: 3600
+                      path: token
+            - name: gcp-adc
+              configMap:
+                name: idp-gcp-adc
+---
+# ADR-0011: fixed service account name so the workload identity pool can match
+# the subject exactly. The projected token is the only credential; the
+# external_account config in the idp-gcp-adc ConfigMap tells ADC where to find
+# it and which service account to impersonate. No GCP secret exists anywhere.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-gcp-sql
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-gcp-sql
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              env:
+                - name: GOOGLE_APPLICATION_CREDENTIALS
+                  value: /etc/idp-platform/gcp/credential-config.json
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 768Mi
+              volumeMounts:
+                - name: gcp-federated-token
+                  mountPath: /var/run/secrets/idp-platform/gcp
+                  readOnly: true
+                - name: gcp-adc
+                  mountPath: /etc/idp-platform/gcp
+                  readOnly: true
+          volumes:
+            - name: gcp-federated-token
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: idp-platform-gcp-wif
+                      expirationSeconds: 3600
+                      path: token
+            - name: gcp-adc
+              configMap:
+                name: idp-gcp-adc

@@ -1,0 +1,11 @@
+# Activate only the GCP managed resource types the current phase uses.
+apiVersion: apiextensions.crossplane.io/v1alpha1
+kind: ManagedResourceActivationPolicy
+metadata:
+  name: gcp
+spec:
+  activate:
+    - buckets.storage.gcp.m.upbound.io
+    - databaseinstances.sql.gcp.m.upbound.io
+    - databases.sql.gcp.m.upbound.io
+    - users.sql.gcp.m.upbound.io
