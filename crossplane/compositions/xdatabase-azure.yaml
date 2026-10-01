@@ -1,0 +1,259 @@
+# xdatabase on Azure: Postgres Flexible Server, smallest Burstable tier by
+# default, private access only. Pipeline: load the platform region entry and
+# the subscription ID, compose the server and its database, compose a Usage so
+# the server outlives the database, compose the uniform connection Secret, then
+# mark readiness. The network attachment comes from bootstrap (ADR-0008).
+#
+# Provider facts (provider-upjet-azure v2.7.0, ADR-0017, ADR-0021):
+# - External names. FlexibleServer and FlexibleServerDatabase use their name as
+#   the external name, so a rebuilt control plane re-adopts them from the XRs
+#   in git with no lookup step. FlexibleServerConfiguration is
+#   IdentifierFromProvider, which is one reason this Composition composes none.
+# - Password. FlexibleServer supports autoGeneratePassword like RDS, writing
+#   the generated password to the administratorPasswordSecretRef Secret, so
+#   no platform password step is needed (unlike GCP, ADR-0020).
+# - Connection details. The provider publishes endpoint (the FQDN), port 5432,
+#   password, and username as login@servername, the retired Single Server
+#   format. Flexible Server rejects that form, so the consumer Secret sets the
+#   plain login itself and only the password is read from the provider.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xdatabase-azure
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    platform.jordandesigns.io/cloud: azure
+spec:
+  compositeTypeRef:
+    apiVersion: platform.jordandesigns.io/v1alpha1
+    kind: Database
+  mode: Pipeline
+  pipeline:
+    - step: load-platform-region
+      functionRef:
+        name: function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Selector
+              selector:
+                mode: Single
+                matchLabels:
+                  - key: platform.jordandesigns.io/region
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.region
+            # Applied by make azure-provider from Terraform outputs, not from git.
+            - type: Reference
+              ref:
+                name: platform-azure-subscription
+
+    - step: compose-flexible-server
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $env := index .context "apiextensions.crossplane.io/environment" }}
+            {{- $az := $env.azure }}
+            {{- $sub := $env.azureSubscription.id }}
+            {{- $ns := $xr.metadata.namespace }}
+            {{- $name := $xr.metadata.name }}
+            {{- /*
+              ADR-0015: Flexible Server names are global DNS labels under
+              postgres.database.azure.com, 3 to 63 characters. idp-<ns>-<name>
+              alone could collide with any other tenant, so a hash suffix is
+              added. The hash covers the subscription, namespace, and name, so
+              it is deterministic (re-adoption still works) and two platforms
+              with the same team and database names do not collide. The
+              readable part is truncated to keep the total at 63.
+            */}}
+            {{- $hash := printf "%s/%s/%s" $sub $ns $name | sha256sum | trunc 8 }}
+            {{- $readable := printf "idp-%s-%s" $ns $name | trunc 54 | trimSuffix "-" }}
+            {{- $server := printf "%s-%s" $readable $hash }}
+            {{- $netRg := printf "/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network" $sub $az.networkResourceGroup }}
+            {{- $sku := dict "small" "B_Standard_B1ms" "medium" "B_Standard_B2s" "large" "GP_Standard_D2ds_v5" }}
+            {{- $storage := dict "small" 32768 "medium" 65536 "large" 131072 }}
+            ---
+            apiVersion: dbforpostgresql.azure.m.upbound.io/v1beta1
+            kind: FlexibleServer
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: flexible-server
+                crossplane.io/external-name: {{ $server }}
+              labels:
+                platform.jordandesigns.io/component: flexible-server
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: azure
+              forProvider:
+                location: {{ $az.region }}
+                resourceGroupName: {{ $az.dataResourceGroup }}
+                version: {{ $xr.spec.engineVersion | quote }}
+                # T-shirt sizes to Azure SKUs. Only this file knows them. 32 GiB
+                # is the smallest storage Flexible Server offers.
+                skuName: {{ index $sku $xr.spec.size }}
+                storageMb: {{ index $storage $xr.spec.size }}
+                autoGrowEnabled: false
+                # ADR-0004: no HA (highAvailability omitted), no geo backup,
+                # the minimum retention Azure allows (7 days, it cannot be 0).
+                backupRetentionDays: 7
+                geoRedundantBackupEnabled: false
+                # deny-public-database. The provider defaults public access to
+                # true, so it is set explicitly; private access through the
+                # shared delegated subnet and private DNS zone (ADR-0008).
+                publicNetworkAccessEnabled: false
+                delegatedSubnetId: {{ printf "%s/virtualNetworks/%s/subnets/%s" $netRg $az.vnetName $az.postgresSubnetName }}
+                privateDnsZoneId: {{ printf "%s/privateDnsZones/%s" $netRg $az.privateDnsZoneName }}
+                authentication:
+                  passwordAuthEnabled: true
+                  activeDirectoryAuthEnabled: false
+                administratorLogin: app_admin
+                autoGeneratePassword: true
+                administratorPasswordSecretRef:
+                  name: {{ printf "%s-pgadmin" $name }}
+                  key: password
+                # Required tags (require-tags control).
+                tags:
+                  Project: idp-platform
+                  ManagedBy: crossplane
+                  Owner: {{ $xr.spec.owner }}
+                  CostCenter: {{ $xr.spec.costCenter }}
+                  Environment: {{ $xr.spec.environment }}
+                  Team: {{ $ns }}
+                  Database: {{ $name }}
+              # Provider-owned Secret, internal to the Composition. Consumers
+              # read the composed <name>-conn Secret instead.
+              writeConnectionSecretToRef:
+                name: {{ printf "%s-pgfs" $name }}
+            ---
+            # RDS creates the application database inside the instance; Flexible
+            # Server, like Cloud SQL, models it as a separate resource.
+            apiVersion: dbforpostgresql.azure.m.upbound.io/v1beta1
+            kind: FlexibleServerDatabase
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: flexible-server-database
+                crossplane.io/external-name: app
+              labels:
+                platform.jordandesigns.io/component: flexible-server-database
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: azure
+              forProvider:
+                charset: UTF8
+                collation: en_US.utf8
+                serverIdSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    platform.jordandesigns.io/component: flexible-server
+            ---
+            {{- $fqdn := dig "observed" "resources" "flexible-server" "resource" "status" "atProvider" "fqdn" "" $ }}
+            apiVersion: {{ $xr.apiVersion }}
+            kind: {{ $xr.kind }}
+            status:
+              # Flexible Server reports a DNS name, resolved through the private
+              # DNS zone, and never reports a port (ADR-0020, ADR-0021).
+              {{- if $fqdn }}
+              endpoint: {{ $fqdn }}
+              {{- end }}
+              port: 5432
+
+    # The server must outlive its database. When the XR is deleted every
+    # composed resource is deleted at once; a Usage blocks deleting the server
+    # until the database is gone, and replayDeletion retries it (ADR-0020).
+    - step: compose-usages
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            ---
+            apiVersion: protection.crossplane.io/v1beta1
+            kind: Usage
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: usage-flexible-server-database
+                gotemplating.fn.crossplane.io/ready: "True"
+            spec:
+              replayDeletion: true
+              reason: A Flexible Server database must be deleted before its server.
+              of:
+                apiVersion: dbforpostgresql.azure.m.upbound.io/v1beta1
+                kind: FlexibleServer
+                resourceSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    platform.jordandesigns.io/component: flexible-server
+              by:
+                apiVersion: dbforpostgresql.azure.m.upbound.io/v1beta1
+                kind: FlexibleServerDatabase
+                resourceSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    platform.jordandesigns.io/component: flexible-server-database
+
+    # ADR-0016: the consumer Secret has the same six keys on every cloud. It is
+    # always composed but reports ready only once the host and password exist
+    # and the app database is live, so XR Ready implies a usable Secret.
+    - step: compose-connection-secret
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $secretName := printf "%s-conn" $xr.metadata.name }}
+            {{- $server := dig "observed" "resources" "flexible-server" dict . }}
+            {{- $fqdn := dig "resource" "status" "atProvider" "fqdn" "" $server }}
+            {{- $cd := dig "connectionDetails" dict $server }}
+            {{- $dbReady := false }}
+            {{- range (dig "observed" "resources" "flexible-server-database" "resource" "status" "conditions" list .) }}
+            {{- if and (eq .type "Ready") (eq .status "True") }}{{ $dbReady = true }}{{ end }}
+            {{- end }}
+            {{- $complete := and $fqdn (hasKey $cd "password") $dbReady }}
+            ---
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: {{ $secretName }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: connection-secret
+                gotemplating.fn.crossplane.io/ready: {{ ternary "True" "False" (not (not $complete)) | quote }}
+              labels:
+                platform.jordandesigns.io/database: {{ $xr.metadata.name }}
+            type: Opaque
+            data:
+              username: {{ "app_admin" | b64enc }}
+              dbname: {{ "app" | b64enc }}
+              sslmode: {{ "require" | b64enc }}
+              port: {{ "5432" | b64enc }}
+              {{- if $fqdn }}
+              host: {{ $fqdn | b64enc }}
+              {{- end }}
+              {{- if hasKey $cd "password" }}
+              password: {{ index $cd "password" }}
+              {{- end }}
+            ---
+            apiVersion: {{ $xr.apiVersion }}
+            kind: {{ $xr.kind }}
+            status:
+              connectionSecret: {{ $secretName }}
+
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready

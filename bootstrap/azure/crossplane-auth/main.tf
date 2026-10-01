@@ -10,7 +10,18 @@ data "terraform_remote_state" "issuer" {
   }
 }
 
+data "terraform_remote_state" "network" {
+  backend = "s3"
+
+  config = {
+    bucket = "tf-backend-jord-projs"
+    key    = "idp-platform/bootstrap/azure/network.tfstate"
+    region = "us-east-1"
+  }
+}
+
 locals {
+  network    = data.terraform_remote_state.network.outputs
   issuer_url = data.terraform_remote_state.issuer.outputs.issuer_url
 
   tags = {
@@ -42,11 +53,11 @@ resource "azurerm_user_assigned_identity" "provider" {
 resource "azurerm_federated_identity_credential" "provider" {
   for_each = toset(var.provider_service_accounts)
 
-  name      = "k3s-${each.value}"
-  parent_id = azurerm_user_assigned_identity.provider.id
-  issuer    = local.issuer_url
-  subject   = "system:serviceaccount:${var.crossplane_namespace}:${each.value}"
-  audience  = ["api://AzureADTokenExchange"]
+  name                      = "k3s-${each.value}"
+  user_assigned_identity_id = azurerm_user_assigned_identity.provider.id
+  issuer                    = local.issuer_url
+  subject                   = "system:serviceaccount:${var.crossplane_namespace}:${each.value}"
+  audience                  = ["api://AzureADTokenExchange"]
 }
 
 # Phase 0: resource group lifecycle only, for the verification ResourceGroup.
@@ -72,6 +83,74 @@ resource "azurerm_role_definition" "phase0" {
 resource "azurerm_role_assignment" "phase0" {
   scope              = data.azurerm_subscription.current.id
   role_definition_id = azurerm_role_definition.phase0.role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.provider.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+# Phase 3: exactly what xdatabase-azure needs, as two roles so no single grant
+# spans both groups (ADR-0021). Azure RBAC cannot condition a create on a name
+# prefix or a request tag the way the AWS role does (ADR-0014), so the
+# resource group is the boundary: the identity can manage Flexible Servers
+# only inside the data group, and has no network write anywhere.
+resource "azurerm_role_definition" "postgres" {
+  name        = "idp-crossplane-provider-azure-postgres"
+  scope       = local.network.data_resource_group_id
+  description = "Postgres Flexible Server lifecycle for the idp-platform Crossplane Azure provider, data resource group only."
+
+  permissions {
+    actions = [
+      "Microsoft.DBforPostgreSQL/flexibleServers/read",
+      "Microsoft.DBforPostgreSQL/flexibleServers/write",
+      "Microsoft.DBforPostgreSQL/flexibleServers/delete",
+      "Microsoft.DBforPostgreSQL/flexibleServers/databases/read",
+      "Microsoft.DBforPostgreSQL/flexibleServers/databases/write",
+      "Microsoft.DBforPostgreSQL/flexibleServers/databases/delete",
+    ]
+    not_actions = []
+  }
+
+  assignable_scopes = [local.network.data_resource_group_id]
+}
+
+resource "azurerm_role_assignment" "postgres" {
+  scope              = local.network.data_resource_group_id
+  role_definition_id = azurerm_role_definition.postgres.role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.provider.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+# Creating a server with private access is a linked authorization: ARM also
+# checks join on the delegated subnet and on the private DNS zone. Read and
+# join only, assigned on those two resources, not on their resource group.
+resource "azurerm_role_definition" "network_join" {
+  name        = "idp-crossplane-provider-azure-network-join"
+  scope       = local.network.network_resource_group_id
+  description = "Join the shared Postgres subnet and private DNS zone for the idp-platform Crossplane Azure provider."
+
+  permissions {
+    actions = [
+      "Microsoft.Network/virtualNetworks/subnets/read",
+      "Microsoft.Network/virtualNetworks/subnets/join/action",
+      "Microsoft.Network/privateDnsZones/read",
+      "Microsoft.Network/privateDnsZones/join/action",
+    ]
+    not_actions = []
+  }
+
+  # Custom roles accept only management group, subscription, or resource
+  # group assignable scopes, so the role is defined on the network group and
+  # assigned below on the two resources alone.
+  assignable_scopes = [local.network.network_resource_group_id]
+}
+
+resource "azurerm_role_assignment" "network_join" {
+  for_each = {
+    subnet   = local.network.postgres_subnet_id
+    dns_zone = local.network.private_dns_zone_id
+  }
+
+  scope              = each.value
+  role_definition_id = azurerm_role_definition.network_join.role_definition_resource_id
   principal_id       = azurerm_user_assigned_identity.provider.principal_id
   principal_type     = "ServicePrincipal"
 }

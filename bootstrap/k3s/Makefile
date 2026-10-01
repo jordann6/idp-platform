@@ -4,6 +4,7 @@ KCTL          := kubectl --kubeconfig $(KUBECONFIG) --context idp-k3s
 ISSUER_TF     := ../aws/oidc-issuer
 AUTH_TF       := ../aws/crossplane-auth
 GCP_AUTH_TF   := ../gcp/crossplane-auth
+AZURE_AUTH_TF := ../azure/crossplane-auth
 DISCOVERY_DIR := $(ISSUER_TF)/discovery
 
 # Provider Healthy can read True before the runtime pod exists, so also wait
@@ -76,15 +77,20 @@ aws-verify:
 aws-verify-delete:
 	$(KCTL) -n idp-verify delete bucket.s3.aws.m.upbound.io/verify --wait
 
+# Sub-providers installed for the current phase; must match providers.yaml.
+AZURE_SUBPROVIDERS := provider-azure-dbforpostgresql
+
 .PHONY: azure-provider azure-verify azure-verify-delete
 
 azure-provider:
 	$(KCTL) apply -f ../../crossplane/providers/azure/runtime-config.yaml
 	$(KCTL) apply -f ../../crossplane/providers/azure/providers.yaml
-	$(KCTL) wait provider.pkg.crossplane.io/provider-family-azure --for=condition=Healthy=True --timeout=600s
+	$(KCTL) wait provider.pkg.crossplane.io/provider-family-azure $(addprefix provider.pkg.crossplane.io/,$(AZURE_SUBPROVIDERS)) --for=condition=Healthy=True --timeout=600s
 	$(KCTL) apply -f ../../crossplane/providers/azure/mrap.yaml
 	$(call wait_provider_pod,provider-family-azure)
-	$(KCTL) apply -f ../../crossplane/providers/azure/cluster-provider-config.yaml
+	for p in $(AZURE_SUBPROVIDERS); do until $(KCTL) -n crossplane-system get pod -l pkg.crossplane.io/provider=$$p -o name | grep -q .; do sleep 2; done; $(KCTL) -n crossplane-system wait pod -l pkg.crossplane.io/provider=$$p --for=condition=Ready --timeout=600s || exit 1; done
+	@client=$$(terraform -chdir=$(AZURE_AUTH_TF) output -raw client_id) && tenant=$$(terraform -chdir=$(AZURE_AUTH_TF) output -raw tenant_id) && sub=$$(terraform -chdir=$(AZURE_AUTH_TF) output -raw subscription_id) && test -n "$$client" && test -n "$$tenant" && test -n "$$sub" && sed -e "s|__AZURE_CLIENT_ID__|$$client|" -e "s|__AZURE_TENANT_ID__|$$tenant|" -e "s|__AZURE_SUBSCRIPTION_ID__|$$sub|" ../../crossplane/providers/azure/cluster-provider-config.yaml | $(KCTL) apply -f -
+	@sub=$$(terraform -chdir=$(AZURE_AUTH_TF) output -raw subscription_id) && test -n "$$sub" && sed "s|__AZURE_SUBSCRIPTION_ID__|$$sub|" ../../crossplane/providers/azure/platform-azure-subscription.yaml | $(KCTL) apply -f -
 
 azure-verify:
 	$(KCTL) apply -f ../../crossplane/verify/azure-resource-group.yaml

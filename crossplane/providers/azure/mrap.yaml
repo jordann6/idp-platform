@@ -1,4 +1,7 @@
 # Activate only the Azure managed resource types the current phase uses.
+# Phase 3: the Flexible Server and its database for xdatabase-azure. TLS is
+# enforced by the server default (require_secure_transport on), so no
+# FlexibleServerConfiguration type is activated.
 apiVersion: apiextensions.crossplane.io/v1alpha1
 kind: ManagedResourceActivationPolicy
 metadata:
@@ -6,3 +9,5 @@ metadata:
 spec:
   activate:
     - resourcegroups.azure.m.upbound.io
+    - flexibleservers.dbforpostgresql.azure.m.upbound.io
+    - flexibleserverdatabases.dbforpostgresql.azure.m.upbound.io

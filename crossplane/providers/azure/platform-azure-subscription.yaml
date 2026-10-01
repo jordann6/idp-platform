@@ -1,0 +1,12 @@
+# ADR-0003: the Azure subscription ID the Compositions need to build resource
+# IDs (delegated subnet, private DNS zone). Applied by make azure-provider from
+# Terraform outputs, never synced by Argo, so the identifier stays out of git
+# like the AWS account ID and the GCP project ID. It lives with the provider
+# wiring, outside every path the platform-apis Application includes.
+apiVersion: apiextensions.crossplane.io/v1beta1
+kind: EnvironmentConfig
+metadata:
+  name: platform-azure-subscription
+data:
+  azureSubscription:
+    id: __AZURE_SUBSCRIPTION_ID__

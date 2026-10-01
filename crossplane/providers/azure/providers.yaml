@@ -1,4 +1,6 @@
-# crossplane-contrib builds of provider-upjet-azure (ADR-0013).
+# crossplane-contrib builds of provider-upjet-azure (ADR-0013). Only the
+# sub-providers a phase uses are installed (ADR-0010 memory budget). Phase 3
+# adds dbforpostgresql for xdatabase-azure.
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
@@ -8,3 +10,13 @@ spec:
   skipDependencyResolution: true
   runtimeConfigRef:
     name: provider-family-azure
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-dbforpostgresql
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/provider-azure-dbforpostgresql:v2.7.0
+  skipDependencyResolution: true
+  runtimeConfigRef:
+    name: provider-azure-dbforpostgresql

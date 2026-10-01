@@ -1,13 +1,15 @@
 # ADR-0001: Entra workload identity federation with the projected K3s token.
-# IDs come from bootstrap/azure/crossplane-auth outputs; none are secrets.
+# The IDs are filled in at apply time from bootstrap/azure/crossplane-auth
+# outputs by make azure-provider, so no Azure identifier is committed. None of
+# them is a secret; they are kept out of git for consistency with AWS and GCP.
 apiVersion: azure.m.upbound.io/v1beta1
 kind: ClusterProviderConfig
 metadata:
   name: azure
 spec:
-  clientID: 00000000-0000-0000-0000-000000000000
-  tenantID: 00000000-0000-0000-0000-000000000000
-  subscriptionID: 00000000-0000-0000-0000-000000000000
+  clientID: __AZURE_CLIENT_ID__
+  tenantID: __AZURE_TENANT_ID__
+  subscriptionID: __AZURE_SUBSCRIPTION_ID__
   oidcTokenFilePath: /var/run/secrets/idp-platform/azure/token
   credentials:
     source: OIDCTokenFile

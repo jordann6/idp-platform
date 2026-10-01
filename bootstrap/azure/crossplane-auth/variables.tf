@@ -1,7 +1,11 @@
 variable "subscription_id" {
-  description = "Azure subscription the provider identity is scoped to."
+  description = "Azure subscription the provider identity is scoped to. Set in the gitignored terraform.tfvars, never committed."
   type        = string
-  default     = "00000000-0000-0000-0000-000000000000"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.subscription_id))
+    error_message = "subscription_id must be a subscription GUID."
+  }
 }
 
 variable "location" {
@@ -36,7 +40,7 @@ variable "crossplane_namespace" {
 variable "provider_service_accounts" {
   description = "Fixed provider service account names set by DeploymentRuntimeConfig (ADR-0011). Azure matches subjects exactly, one federated credential each, 20 maximum."
   type        = list(string)
-  default     = ["provider-family-azure"]
+  default     = ["provider-family-azure", "provider-azure-dbforpostgresql"]
 
   validation {
     condition     = length(var.provider_service_accounts) <= 20
