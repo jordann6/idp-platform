@@ -105,7 +105,7 @@ GCP_SUBPROVIDERS := provider-gcp-storage provider-gcp-sql
 gcp-adc:
 	@terraform -chdir=$(GCP_AUTH_TF) output -raw credential_config > /dev/null
 	terraform -chdir=$(GCP_AUTH_TF) output -raw credential_config | $(KCTL) -n crossplane-system create configmap idp-gcp-adc --from-file=credential-config.json=/dev/stdin --dry-run=client -o yaml | $(KCTL) apply -f -
-	@project=$$(terraform -chdir=$(GCP_AUTH_TF) output -raw project_id) && test -n "$$project" && sed "s|__GCP_PROJECT_ID__|$$project|" ../../crossplane/environment/bootstrap/platform-gcp-project.yaml | $(KCTL) apply -f -
+	@project=$$(terraform -chdir=$(GCP_AUTH_TF) output -raw project_id) && test -n "$$project" && sed "s|__GCP_PROJECT_ID__|$$project|" ../../crossplane/providers/gcp/platform-gcp-project.yaml | $(KCTL) apply -f -
 
 gcp-provider: gcp-adc
 	$(KCTL) apply -f ../../crossplane/providers/gcp/runtime-config.yaml
