@@ -36,6 +36,10 @@ backstage:
         - host: github.com
           token: ${GITHUB_TOKEN}
     catalog:
+      # A Database's entity file is deleted in the same pull request as its
+      # claim, so an entity whose file is gone describes nothing and is
+      # removed rather than kept with an orphan annotation (ADR-0019).
+      orphanStrategy: delete
       rules:
         - allow: [Location, Group, User, Template, Component, Resource, System, API]
       locations:

@@ -1,0 +1,12 @@
+# One Resource entity per provisioned Database, written by the Database
+# template next to its claim. Kept in a Location of its own: with no Databases
+# the glob matches nothing, Backstage reports that as a read error, and only
+# this Location carries the error instead of the teams and the template.
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: idp-platform-databases
+  description: Catalog entities for provisioned Databases.
+spec:
+  targets:
+    - ./resources/*/*.yaml

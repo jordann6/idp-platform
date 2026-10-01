@@ -8,5 +8,6 @@ spec:
   targets:
     - ./groups.yaml
     - ../templates/database/template.yaml
-    # One Resource entity per provisioned Database, written by the template.
-    - ./resources/*/*.yaml
+    # Its own Location, because a glob that matches nothing is a read error
+    # and would otherwise drop every target in this file (ADR-0019).
+    - ./resources.yaml
