@@ -21,14 +21,26 @@ backstage:
     limits:
       memory: 1Gi
   appConfig:
+    # The chart starts Backstage with only this config (its ConfigMap), not
+    # the image's app-config files, so every value the frontend requires is
+    # set here; the new frontend system fails to render without app.title.
     app:
+      title: idp-platform
       baseUrl: http://localhost:7007
+    organization:
+      name: idp-platform
     backend:
       baseUrl: http://localhost:7007
       listen:
         port: 7007
       cors:
         origin: http://localhost:7007
+      # Reached only over a plain-HTTP localhost port-forward (ADR-0019).
+      # Helmet's default upgrade-insecure-requests makes Safari fetch every
+      # script from https://localhost:7007, where nothing listens, so the
+      # page renders blank; Chrome exempts localhost. Off for that reason.
+      csp:
+        upgrade-insecure-requests: false
       database:
         client: better-sqlite3
         connection: ":memory:"
