@@ -56,25 +56,31 @@ discovery-docs:
 # billed cloud resources with no controller reconciling them.
 guard-no-managed:
 	@$(KCTL) get --raw /readyz >/dev/null 2>&1 || (echo "Refusing: cluster unreachable, so live managed resources cannot be ruled out. Run make vm-up first." && exit 1)
-	@out=$$($(KCTL) get managed -A -o name) || { echo "Refusing: cannot list managed resources, so live ones cannot be ruled out."; exit 1; }; \
+	@out=$$($(KCTL) get managed -A -o name 2>/dev/null) || { \
+	  crds=$$($(KCTL) get crd -o jsonpath='{range .items[*]}{.spec.names.categories}{"\n"}{end}') || { echo "Refusing: cannot list managed resources or CRDs, so live ones cannot be ruled out."; exit 1; }; \
+	  if printf '%s\n' "$$crds" | grep -q '"managed"'; then echo "Refusing: cannot list managed resources, so live ones cannot be ruled out."; exit 1; fi; \
+	  echo "No CRD is in the managed category (no providers installed), so no managed resource can exist."; out=""; }; \
 	count=$$(printf '%s' "$$out" | grep -c . || true); \
 	if [ "$$count" != "0" ]; then echo "Refusing: $$count Crossplane managed resources still exist. Delete XRs first."; exit 1; fi
 
 CROSSPLANE_VERSION := 2.4.2
 
-.PHONY: crossplane-install aws-provider aws-verify aws-verify-delete
+.PHONY: crossplane-install aws-provider aws-verify aws-verify-delete aws-ingress aws-ingress-clean
 
 crossplane-install:
 	helm repo add crossplane-stable https://charts.crossplane.io/stable --force-update
 	helm upgrade --install crossplane crossplane-stable/crossplane --version $(CROSSPLANE_VERSION) --namespace crossplane-system --create-namespace --kubeconfig $(KUBECONFIG) --kube-context idp-k3s --values crossplane/values.yaml --wait
 
+# Sub-providers installed for the current phase; must match providers.yaml.
+AWS_SUBPROVIDERS := provider-aws-ecs provider-aws-elbv2
+INGRESS_TF       := ../aws/ingress
+
 aws-provider:
 	$(KCTL) apply -f ../../crossplane/providers/aws/runtime-config.yaml
 	$(KCTL) apply -f ../../crossplane/providers/aws/providers.yaml
-	$(KCTL) wait provider.pkg.crossplane.io/provider-family-aws provider.pkg.crossplane.io/provider-aws-s3 provider.pkg.crossplane.io/provider-aws-rds --for=condition=Healthy=True --timeout=600s
+	$(KCTL) wait provider.pkg.crossplane.io/provider-family-aws $(addprefix provider.pkg.crossplane.io/,$(AWS_SUBPROVIDERS)) --for=condition=Healthy=True --timeout=600s
 	$(KCTL) apply -f ../../crossplane/providers/aws/mrap.yaml
-	$(call wait_provider_pod,provider-aws-s3)
-	$(call wait_provider_pod,provider-aws-rds)
+	for p in $(AWS_SUBPROVIDERS); do until $(KCTL) -n crossplane-system get pod -l pkg.crossplane.io/provider=$$p -o name | grep -q .; do sleep 2; done; $(KCTL) -n crossplane-system wait pod -l pkg.crossplane.io/provider=$$p --for=condition=Ready --timeout=600s || exit 1; done
 	$(call wait_config_settled,clusterproviderconfig.aws.m.upbound.io/aws)
 	@arn=$$(terraform -chdir=$(AUTH_TF) output -raw provider_role_arn) && test -n "$$arn" && sed "s|__PROVIDER_ROLE_ARN__|$$arn|" ../../crossplane/providers/aws/cluster-provider-config.yaml | $(KCTL) apply -f -
 
@@ -85,6 +91,19 @@ aws-verify:
 
 aws-verify-delete:
 	$(KCTL) -n idp-verify delete bucket.s3.aws.m.upbound.io/verify --wait
+
+# ADR-0022: the ingress ARNs and the cache registry embed the account ID, so
+# they reach the Composition through a bootstrap-only EnvironmentConfig
+# generated from bootstrap/aws/ingress outputs, never through git or Argo.
+aws-ingress:
+	@pub=$$(terraform -chdir=$(INGRESS_TF) output -raw public_listener_arn) && int=$$(terraform -chdir=$(INGRESS_TF) output -raw internal_listener_arn) && role=$$(terraform -chdir=$(INGRESS_TF) output -raw execution_role_arn) && reg=$$(terraform -chdir=$(INGRESS_TF) output -raw ecr_cache_registry) && sg=$$(terraform -chdir=$(INGRESS_TF) output -raw tasks_security_group_id) && test -n "$$pub" && test -n "$$role" && test -n "$$reg" && test -n "$$sg" && sed -e "s|__PUBLIC_LISTENER_ARN__|$$pub|" -e "s|__INTERNAL_LISTENER_ARN__|$$int|" -e "s|__EXECUTION_ROLE_ARN__|$$role|" -e "s|__ECR_CACHE_REGISTRY__|$$reg|" -e "s|__TASKS_SECURITY_GROUP_ID__|$$sg|" ../../crossplane/providers/aws/platform-aws-ingress.yaml | $(KCTL) apply -f -
+
+# The pull-through cache creates repositories under ecr-public/ on first pull,
+# outside Terraform. Run before destroying bootstrap/aws/ingress so no image
+# storage outlives the session.
+aws-ingress-clean:
+	@for r in $$(aws ecr describe-repositories --region us-east-1 --query "repositories[?starts_with(repositoryName, 'ecr-public/')].repositoryName" --output text); do echo "deleting $$r"; aws ecr delete-repository --region us-east-1 --repository-name $$r --force --query 'repository.repositoryName' --output text || exit 1; done
+	-$(KCTL) delete environmentconfig platform-aws-ingress --ignore-not-found
 
 # ADR-0017: re-adopt an RDS instance after a control plane rebuild. The new MR
 # cannot create (DBInstanceAlreadyExists), so look up the AWS-assigned
@@ -129,7 +148,7 @@ azure-verify-delete:
 	$(KCTL) -n idp-verify delete resourcegroup.azure.m.upbound.io/verify --wait
 
 # Sub-providers installed for the current phase; must match providers.yaml.
-GCP_SUBPROVIDERS := provider-gcp-storage provider-gcp-sql
+GCP_SUBPROVIDERS := provider-gcp-cloudrun
 
 .PHONY: gcp-provider gcp-adc gcp-verify gcp-verify-delete
 

@@ -1,9 +1,14 @@
 # Activate only the AWS managed resource types the current phase uses.
+# Phase 4 (xwebservice-aws): ECS services and task definitions, ALB target
+# groups and listener rules. Buckets (Phase 0) and RDS instances (Phase 1)
+# come back when their sub-providers are reinstalled.
 apiVersion: apiextensions.crossplane.io/v1alpha1
 kind: ManagedResourceActivationPolicy
 metadata:
   name: aws
 spec:
   activate:
-    - buckets.s3.aws.m.upbound.io
-    - instances.rds.aws.m.upbound.io
+    - services.ecs.aws.m.upbound.io
+    - taskdefinitions.ecs.aws.m.upbound.io
+    - lbtargetgroups.elbv2.aws.m.upbound.io
+    - lblistenerrules.elbv2.aws.m.upbound.io

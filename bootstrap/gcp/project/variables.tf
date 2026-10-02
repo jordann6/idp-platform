@@ -45,6 +45,7 @@ variable "services" {
   description = "APIs the platform needs in this project, and nothing else."
   type        = list(string)
   default = [
+    "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
     "cloudbilling.googleapis.com",
     "cloudresourcemanager.googleapis.com",
@@ -53,6 +54,7 @@ variable "services" {
     "iamcredentials.googleapis.com",
     "logging.googleapis.com",
     "orgpolicy.googleapis.com",
+    "run.googleapis.com",
     "servicenetworking.googleapis.com",
     "serviceusage.googleapis.com",
     "sqladmin.googleapis.com",

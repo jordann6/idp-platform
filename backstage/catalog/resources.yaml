@@ -1,12 +1,12 @@
-# One Resource entity per provisioned Database, written by the Database
-# template next to its claim, plus the databases System they belong to. Kept in
+# One catalog entity per provisioned Database or WebService, written by its
+# template next to its claim, plus the Systems they belong to. Kept in
 # a Location of its own so that if this glob ever fails to read, only this
 # Location carries the error, not the teams and the template.
 apiVersion: backstage.io/v1alpha1
 kind: Location
 metadata:
   name: idp-platform-databases
-  description: Catalog entities for provisioned Databases.
+  description: Catalog entities for provisioned Databases and WebServices.
 spec:
   targets:
     - ./resources/*/*.yaml

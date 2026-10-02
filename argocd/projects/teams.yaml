@@ -1,5 +1,6 @@
-# Team claims. A team Application can create its namespace and Database XRs,
-# nothing else: no Secrets, no RBAC, no raw managed resources (ADR-0018).
+# Team claims. A team Application can create its namespace and the paved-road
+# XRs (Database, WebService), nothing else: no Secrets, no RBAC, no raw
+# managed resources (ADR-0018). A new paved-road type is one more entry here.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -18,3 +19,5 @@ spec:
   namespaceResourceWhitelist:
     - group: platform.jordandesigns.io
       kind: Database
+    - group: platform.jordandesigns.io
+      kind: WebService

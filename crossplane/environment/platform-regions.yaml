@@ -17,6 +17,19 @@ data:
     region: us-east-1
     dbSubnetGroupName: idp-platform-us-east
     postgresSecurityGroupId: sg-0643f6eadb6f30e4c
+    # Web services (ADR-0022). Values that outlive a demo session only: the
+    # private subnets from bootstrap/aws/network and the fixed names from
+    # bootstrap/aws/ingress. The listener ARNs, execution role, and task
+    # security group are per session and account specific, so they come from
+    # the bootstrap-only platform-aws-ingress EnvironmentConfig.
+    vpcId: vpc-0dc3bda580ea7530a
+    privateSubnetIds:
+      - subnet-0dca0cd9e17aad742
+      - subnet-022d0ee77a043dc78
+    webClusterName: idp-platform-us-east
+    webLogGroup: /idp-platform/webservices/us-east
+    webAppsDomain: apps.jordandesigns.io
+    webInternalDomain: internal.apps.jordandesigns.io
   # Outputs of bootstrap/azure/network. eastus is restricted for Postgres
   # Flexible Server on this subscription, so us-east maps to eastus2 (ADR-0003).
   # Names only: the subscription ID lives in the platform-azure-subscription
@@ -35,3 +48,7 @@ data:
     region: us-east1
     networkName: idp-platform-us-east
     allocatedIpRange: idp-platform-us-east-psa
+    # Web services (ADR-0022), outputs of bootstrap/gcp/web. Names only; the
+    # Composition adds the project from platform-gcp-project.
+    webCacheRepository: ecr-public
+    webRuntimeServiceAccountId: idp-webservice-runtime

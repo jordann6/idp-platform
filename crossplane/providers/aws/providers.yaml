@@ -1,5 +1,9 @@
 # crossplane-contrib builds of provider-upjet-aws (ADR-0013). The family
 # provider owns the ProviderConfig types; each sub-provider is its own pod.
+# Installed per phase for memory (ADR-0010). Phase 4 needs ecs and elbv2;
+# provider-aws-s3 (Phase 0) and provider-aws-rds (Phase 1) are left out and
+# reinstalled from git history when a phase needs them. Must match
+# AWS_SUBPROVIDERS in bootstrap/k3s/Makefile.
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
@@ -11,19 +15,19 @@ spec:
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
-  name: provider-aws-s3
+  name: provider-aws-ecs
 spec:
-  package: xpkg.crossplane.io/crossplane-contrib/provider-aws-s3:v2.8.1
+  package: xpkg.crossplane.io/crossplane-contrib/provider-aws-ecs:v2.8.1
   skipDependencyResolution: true
   runtimeConfigRef:
-    name: provider-aws-s3
+    name: provider-aws-ecs
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
-  name: provider-aws-rds
+  name: provider-aws-elbv2
 spec:
-  package: xpkg.crossplane.io/crossplane-contrib/provider-aws-rds:v2.8.1
+  package: xpkg.crossplane.io/crossplane-contrib/provider-aws-elbv2:v2.8.1
   skipDependencyResolution: true
   runtimeConfigRef:
-    name: provider-aws-rds
+    name: provider-aws-elbv2

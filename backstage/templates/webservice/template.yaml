@@ -1,0 +1,154 @@
+# Paved-road WebService. Renders one namespaced XR into claims/<team>/, plus
+# its catalog Component under backstage/catalog/resources/<team>/, and opens a
+# pull request; it never pushes to a path Argo syncs (CLAUDE.md, change
+# management). The cloud comes from the team's catalog entry (ADR-0012), and
+# every field mirrors a rule in the xwebservice XRD so bad input fails here.
+# Files are named <name>.webservice.yaml so they never collide with a
+# Database of the same name. The image is supplied, not built: repo and
+# pipeline scaffolding is deferred (ADR-0022).
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: webservice
+  title: Web service
+  description: A container web service on your team's cloud, delivered by pull request.
+  tags:
+    - webservice
+    - container
+spec:
+  owner: group:default/platform
+  type: service
+  parameters:
+    - title: Web service
+      required:
+        - name
+        - team
+        - image
+        - costCenter
+      properties:
+        name:
+          title: Name
+          description: Lowercase letters, digits, and single hyphens. Becomes part of the cloud resource names.
+          type: string
+          pattern: "^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$"
+          maxLength: 30
+        team:
+          title: Team
+          type: string
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+        image:
+          title: Image
+          description: Fully qualified image pinned by digest, for example registry.example.com/team/app@sha256:<64 hex characters>. Tags are not accepted.
+          type: string
+          maxLength: 255
+          pattern: "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$"
+        port:
+          title: Port
+          description: Port the container listens on. At least 1024, because the container runs without root.
+          type: integer
+          minimum: 1024
+          maximum: 65535
+          default: 8080
+        healthPath:
+          title: Health check path
+          type: string
+          pattern: "^/[A-Za-z0-9._~/-]*$"
+          maxLength: 128
+          default: /
+        size:
+          title: Size
+          type: string
+          enum: [small, medium, large]
+          default: small
+        visibility:
+          title: Visibility
+          description: internal is reachable only from the platform network; public is reachable from the internet over HTTPS.
+          type: string
+          enum: [internal, public]
+          default: internal
+        maxInstances:
+          title: Maximum instances
+          type: integer
+          minimum: 1
+          maximum: 3
+          default: 1
+        environment:
+          title: Environment
+          type: string
+          enum: [dev, staging, prod]
+          default: dev
+        costCenter:
+          title: Cost center
+          type: string
+          pattern: "^cc-[0-9]{4}$"
+  steps:
+    - id: team
+      name: Look up team
+      action: catalog:fetch
+      input:
+        entityRef: ${{ parameters.team }}
+
+    - id: render
+      name: Render claim
+      action: fetch:template
+      input:
+        url: ./skeleton-claim
+        targetPath: ./out/claims/${{ steps.team.output.entity.metadata.name }}
+        values:
+          name: ${{ parameters.name }}
+          namespace: ${{ steps.team.output.entity.metadata.name }}
+          cloud: ${{ steps.team.output.entity.metadata.annotations['platform.jordandesigns.io/default-cloud'] }}
+          image: ${{ parameters.image }}
+          port: ${{ parameters.port }}
+          healthPath: ${{ parameters.healthPath }}
+          size: ${{ parameters.size }}
+          visibility: ${{ parameters.visibility }}
+          maxInstances: ${{ parameters.maxInstances }}
+          environment: ${{ parameters.environment }}
+          costCenter: ${{ parameters.costCenter }}
+          owner: ${{ user.ref | parseEntityRef | pick('name') }}
+
+    # The catalog entry rides in the same pull request, so a WebService and
+    # its catalog entity are merged, and torn down, together.
+    - id: entity
+      name: Render catalog entity
+      action: fetch:template
+      input:
+        url: ./skeleton-entity
+        targetPath: ./out/backstage/catalog/resources/${{ steps.team.output.entity.metadata.name }}
+        values:
+          name: ${{ parameters.name }}
+          namespace: ${{ steps.team.output.entity.metadata.name }}
+          cloud: ${{ steps.team.output.entity.metadata.annotations['platform.jordandesigns.io/default-cloud'] }}
+          visibility: ${{ parameters.visibility }}
+          environment: ${{ parameters.environment }}
+          owner: ${{ user.ref | parseEntityRef | pick('name') }}
+
+    - id: pr
+      name: Open pull request
+      action: publish:github:pull-request
+      input:
+        repoUrl: github.com?owner=jordann6&repo=idp-platform
+        targetBranchName: main
+        branchName: webservice/${{ steps.team.output.entity.metadata.name }}-${{ parameters.name }}
+        title: "WebService ${{ parameters.name }} for ${{ steps.team.output.entity.metadata.name }}"
+        description: |
+          Requested through the Backstage WebService template.
+
+          Team: ${{ steps.team.output.entity.metadata.name }}
+          Image: ${{ parameters.image }}
+          Size: ${{ parameters.size }}
+          Visibility: ${{ parameters.visibility }}
+          Environment: ${{ parameters.environment }}
+          Cost center: ${{ parameters.costCenter }}
+
+          Merging this PR lets Argo CD create the WebService and adds it to the catalog. Closing it creates nothing. To tear it down later, remove both files in one pull request.
+        sourcePath: ./out
+
+  output:
+    links:
+      - title: Pull request
+        url: ${{ steps.pr.output.remoteUrl }}

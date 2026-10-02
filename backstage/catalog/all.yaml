@@ -8,6 +8,7 @@ spec:
   targets:
     - ./groups.yaml
     - ../templates/database/template.yaml
+    - ../templates/webservice/template.yaml
     # Its own Location, because a glob that matches nothing is a read error
     # and would otherwise drop every target in this file (ADR-0019).
     - ./resources.yaml

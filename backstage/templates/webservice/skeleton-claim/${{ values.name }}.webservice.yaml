@@ -1,0 +1,21 @@
+# Written by the Backstage WebService template.
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: WebService
+metadata:
+  name: ${{ values.name }}
+  namespace: ${{ values.namespace }}
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: ${{ values.cloud }}
+  image: ${{ values.image }}
+  port: ${{ values.port }}
+  healthPath: ${{ values.healthPath }}
+  size: ${{ values.size }}
+  visibility: ${{ values.visibility }}
+  maxInstances: ${{ values.maxInstances }}
+  region: us-east
+  owner: ${{ values.owner }}
+  costCenter: ${{ values.costCenter }}
+  environment: ${{ values.environment }}

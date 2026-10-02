@@ -66,11 +66,21 @@ data "aws_iam_policy_document" "boundary" {
       "ec2:*",
       "kms:*",
       "eks:*",
+      "ecs:*",
       "elasticloadbalancing:*",
       "logs:*",
       "cloudwatch:*",
     ]
     resources = ["*"]
+  }
+
+  # Phase 4: ECS needs a task execution role passed to it. PassRole changes
+  # no IAM state, and the ceiling allows passing exactly one role, so the
+  # boundary still denies every IAM change.
+  statement {
+    sid       = "PassWebServiceExecutionRole"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.web_execution_role_name}"]
   }
 
   statement {
@@ -249,4 +259,221 @@ resource "aws_iam_policy" "phase1" {
 resource "aws_iam_role_policy_attachment" "phase1" {
   role       = aws_iam_role.provider.name
   policy_arn = aws_iam_policy.phase1.arn
+}
+
+locals {
+  ecs_arn_prefix = "arn:aws:ecs:${var.region}:${data.aws_caller_identity.current.account_id}"
+  elb_arn_prefix = "arn:aws:elasticloadbalancing:${var.region}:${data.aws_caller_identity.current.account_id}"
+  web_service    = "${local.ecs_arn_prefix}:service/${var.web_cluster_name}/${var.web_name_prefix}*"
+  web_taskdef    = "${local.ecs_arn_prefix}:task-definition/${var.web_name_prefix}*:*"
+  web_tg         = "${local.elb_arn_prefix}:targetgroup/${var.web_name_prefix}*/*"
+  web_listeners  = "${local.elb_arn_prefix}:listener/app/${var.web_alb_name_prefix}*/*/*"
+  web_rules      = "${local.elb_arn_prefix}:listener-rule/app/${var.web_alb_name_prefix}*/*/*/*"
+}
+
+# Phase 4: ECS services, task definitions, target groups, and listener rules
+# for the xwebservice-aws Composition (ADR-0022). Services, task definitions,
+# and target groups are scoped like RDS: the idp- prefix, the Project tag on
+# create, and the Project tag on every change. Listener rules are scoped to
+# the platform's own ALBs instead, because every rule on them is the
+# platform's, the same boundary-by-container trade Azure makes with its data
+# resource group (ADR-0021). No ec2 write: the network and security groups
+# are bootstrap. The only role that can be passed is the shared execution
+# role.
+#trivy:ignore:AWS-0342
+data "aws_iam_policy_document" "phase4" {
+  #checkov:skip=CKV_AWS_356:Task definition register, deregister, and describe and the ELB describe calls do not support resource-level permissions; each is conditioned or read-only.
+  #checkov:skip=CKV_AWS_111:Task definition register and deregister do not support resource-level permissions; register requires the Project request tag.
+  statement {
+    sid       = "RegisterTaggedTaskDefinitions"
+    actions   = ["ecs:RegisterTaskDefinition"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = ["idp-platform"]
+    }
+  }
+
+  # Deregistering only marks a revision inactive; running tasks are not
+  # affected. The action has no resource-level permissions.
+  statement {
+    sid       = "ManageTaskDefinitions"
+    actions   = ["ecs:DeregisterTaskDefinition", "ecs:DescribeTaskDefinition"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "CreateTaggedWebServices"
+    actions   = ["ecs:CreateService"]
+    resources = [local.web_service]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = ["idp-platform"]
+    }
+  }
+
+  statement {
+    sid       = "ManageWebServices"
+    actions   = ["ecs:UpdateService", "ecs:DeleteService"]
+    resources = [local.web_service]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = ["idp-platform"]
+    }
+  }
+
+  statement {
+    sid       = "ReadWebServices"
+    actions   = ["ecs:DescribeServices", "ecs:ListTagsForResource"]
+    resources = [local.web_service, local.web_taskdef]
+  }
+
+  # Tags at create time: ECS authorizes TagResource separately when a create
+  # call carries tags.
+  statement {
+    sid       = "TagOnCreate"
+    actions   = ["ecs:TagResource"]
+    resources = [local.web_service, local.web_taskdef]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ecs:CreateAction"
+      values   = ["CreateService", "RegisterTaskDefinition"]
+    }
+  }
+
+  # Same retag and untag rules as RDS (ADR-0017 amendment in PR #23): changes
+  # on resources the platform owns, never to or away from the Project tag.
+  statement {
+    sid       = "RetagWebResources"
+    actions   = ["ecs:TagResource"]
+    resources = [local.web_service, local.web_taskdef]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = ["idp-platform"]
+    }
+
+    condition {
+      test     = "StringEqualsIfExists"
+      variable = "aws:RequestTag/Project"
+      values   = ["idp-platform"]
+    }
+  }
+
+  statement {
+    sid       = "UntagWebResources"
+    actions   = ["ecs:UntagResource"]
+    resources = [local.web_service, local.web_taskdef]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = ["idp-platform"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringNotEquals"
+      variable = "aws:TagKeys"
+      values   = ["Project"]
+    }
+  }
+
+  statement {
+    sid       = "CreateTaggedTargetGroups"
+    actions   = ["elasticloadbalancing:CreateTargetGroup"]
+    resources = [local.web_tg]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = ["idp-platform"]
+    }
+  }
+
+  statement {
+    sid = "ManageTargetGroups"
+    actions = [
+      "elasticloadbalancing:ModifyTargetGroup",
+      "elasticloadbalancing:ModifyTargetGroupAttributes",
+      "elasticloadbalancing:DeleteTargetGroup",
+      "elasticloadbalancing:RemoveTags",
+    ]
+    resources = [local.web_tg]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = ["idp-platform"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringNotEquals"
+      variable = "aws:TagKeys"
+      values   = ["Project"]
+    }
+  }
+
+  # AddTags on a target group: at create (CreateAction) or as a change on one
+  # the platform already owns, and never to another Project value.
+  statement {
+    sid       = "TagTargetGroups"
+    actions   = ["elasticloadbalancing:AddTags"]
+    resources = [local.web_tg]
+
+    condition {
+      test     = "StringEqualsIfExists"
+      variable = "aws:RequestTag/Project"
+      values   = ["idp-platform"]
+    }
+  }
+
+  statement {
+    sid = "ManageRulesOnPlatformListeners"
+    actions = [
+      "elasticloadbalancing:CreateRule",
+      "elasticloadbalancing:ModifyRule",
+      "elasticloadbalancing:DeleteRule",
+      "elasticloadbalancing:SetRulePriorities",
+      "elasticloadbalancing:AddTags",
+      "elasticloadbalancing:RemoveTags",
+    ]
+    resources = [local.web_listeners, local.web_rules]
+  }
+
+  statement {
+    sid       = "DescribeLoadBalancing"
+    actions   = ["elasticloadbalancing:Describe*"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "PassExecutionRoleToEcsTasks"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.web_execution_role_name}"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_policy" "phase4" {
+  name        = "idp-crossplane-provider-aws-phase4"
+  description = "Phase 4 ECS and ELB permissions for the idp-platform Crossplane AWS provider."
+  policy      = data.aws_iam_policy_document.phase4.json
+}
+
+resource "aws_iam_role_policy_attachment" "phase4" {
+  role       = aws_iam_role.provider.name
+  policy_arn = aws_iam_policy.phase4.arn
 }

@@ -1,0 +1,24 @@
+# Written by the Backstage WebService template next to the claim it describes.
+# A web service is a Component in Backstage terms, not a Resource. The team
+# owns it; the requester is recorded separately because guest sign-in means
+# every requester is guest for now (ADR-0019).
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.namespace }}-${{ values.name }}
+  title: ${{ values.name }}
+  description: Web service ${{ values.name }} for ${{ values.namespace }}, delivered by the WebService template.
+  annotations:
+    backstage.io/source-location: url:https://github.com/jordann6/idp-platform/tree/main/claims/${{ values.namespace }}/
+    platform.jordandesigns.io/claim: claims/${{ values.namespace }}/${{ values.name }}.webservice.yaml
+    platform.jordandesigns.io/cloud: ${{ values.cloud }}
+    platform.jordandesigns.io/visibility: ${{ values.visibility }}
+    platform.jordandesigns.io/requested-by: ${{ values.owner }}
+  tags:
+    - webservice
+    - ${{ values.cloud }}
+spec:
+  type: service
+  lifecycle: ${{ values.environment }}
+  owner: group:default/${{ values.namespace }}
+  system: webservices

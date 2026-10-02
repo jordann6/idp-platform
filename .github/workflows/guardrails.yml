@@ -32,6 +32,7 @@ jobs:
       aws_crossplane_auth: ${{ steps.diff.outputs.aws_crossplane_auth }}
       aws_budget: ${{ steps.diff.outputs.aws_budget }}
       aws_network: ${{ steps.diff.outputs.aws_network }}
+      aws_ingress: ${{ steps.diff.outputs.aws_ingress }}
       azure_crossplane_auth: ${{ steps.diff.outputs.azure_crossplane_auth }}
       azure_budget: ${{ steps.diff.outputs.azure_budget }}
       azure_network: ${{ steps.diff.outputs.azure_network }}
@@ -39,6 +40,7 @@ jobs:
       gcp_crossplane_auth: ${{ steps.diff.outputs.gcp_crossplane_auth }}
       gcp_budget: ${{ steps.diff.outputs.gcp_budget }}
       gcp_network: ${{ steps.diff.outputs.gcp_network }}
+      gcp_web: ${{ steps.diff.outputs.gcp_web }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -106,6 +108,13 @@ jobs:
     with:
       terraform_dir: bootstrap/aws/network
 
+  static-aws-ingress:
+    needs: changes
+    if: needs.changes.outputs.aws_ingress == 'true'
+    uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
+    with:
+      terraform_dir: bootstrap/aws/ingress
+
   static-azure-auth:
     needs: changes
     if: needs.changes.outputs.azure_crossplane_auth == 'true'
@@ -154,6 +163,13 @@ jobs:
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/gcp/network
+
+  static-gcp-web:
+    needs: changes
+    if: needs.changes.outputs.gcp_web == 'true'
+    uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
+    with:
+      terraform_dir: bootstrap/gcp/web
 
   # The FinOps allocation policy (finops.rego) already runs inside every
   # static job above, because tf-ci.yml evaluates the whole shared policy/

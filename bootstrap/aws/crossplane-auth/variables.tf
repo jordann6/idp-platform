@@ -30,7 +30,31 @@ variable "crossplane_namespace" {
 variable "provider_service_accounts" {
   description = "Fixed provider service account names set by DeploymentRuntimeConfig (ADR-0011). Each phase adds the sub-providers it installs."
   type        = list(string)
-  default     = ["provider-aws-s3", "provider-aws-rds"]
+  default     = ["provider-aws-s3", "provider-aws-rds", "provider-aws-ecs", "provider-aws-elbv2"]
+}
+
+variable "web_cluster_name" {
+  description = "Shared ECS cluster from bootstrap/aws/ingress. The Phase 4 policy scopes ECS services to it."
+  type        = string
+  default     = "idp-platform-us-east"
+}
+
+variable "web_alb_name_prefix" {
+  description = "Name prefix of the web ALBs from bootstrap/aws/ingress (public and internal). Listener rules are scoped to these load balancers."
+  type        = string
+  default     = "idp-platform-us-east-web"
+}
+
+variable "web_execution_role_name" {
+  description = "Shared ECS task execution role from bootstrap/aws/ingress, the only role the provider may pass. Named, not read from state, because the ingress module is destroyed between sessions."
+  type        = string
+  default     = "idp-platform-us-east-webservice-execution"
+}
+
+variable "web_name_prefix" {
+  description = "Name prefix the xwebservice-aws Composition uses for ECS services, task definition families, and target groups."
+  type        = string
+  default     = "idp-"
 }
 
 variable "verify_bucket_prefix" {

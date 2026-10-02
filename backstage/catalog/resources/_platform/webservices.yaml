@@ -1,0 +1,10 @@
+# Every WebService the template provisions joins this System. Platform file,
+# not a team claim, so the pairing check skips it (underscore directory).
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: webservices
+  title: Web services
+  description: Container web services provisioned through the paved-road WebService template.
+spec:
+  owner: group:default/platform
