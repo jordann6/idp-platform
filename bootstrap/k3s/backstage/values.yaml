@@ -1,14 +1,19 @@
 # Backstage Helm values for the idp-platform control plane. Reached only by
-# kubectl port-forward on the Mac, so guest sign-in and in-memory SQLite are
-# acceptable (ADR-0019). The GitHub token comes from a Secret loaded by
-# make backstage-token and is never committed.
+# kubectl port-forward on the Mac, so in-memory SQLite is acceptable
+# (ADR-0019). The image is the platform's own build of backstage/app, imported
+# into K3s by make backstage-image rather than pulled, so nothing needs a
+# registry credential; the tag is the commit it was built from. The GitHub
+# token and the OAuth app credentials come from Secrets loaded by
+# make backstage-token and make backstage-oauth and are never committed.
 backstage:
   image:
-    registry: ghcr.io
-    repository: backstage/backstage
-    tag: "1.55.2"
+    registry: docker.io
+    repository: library/idp-backstage
+    tag: "__BACKSTAGE_IMAGE_TAG__"
+    pullPolicy: Never
   extraEnvVarsSecrets:
     - backstage-github
+    - backstage-github-oauth
   resources:
     requests:
       cpu: 100m
@@ -27,10 +32,18 @@ backstage:
       database:
         client: better-sqlite3
         connection: ":memory:"
+    # GitHub is the only sign-in. A GitHub user must match a User entity
+    # in backstage/catalog/users.yaml by name, or sign-in is refused; the
+    # guest provider is not in the image at all (ADR-0019).
     auth:
       providers:
-        guest:
-          dangerouslyAllowOutsideDevelopment: true
+        github:
+          development:
+            clientId: ${AUTH_GITHUB_CLIENT_ID}
+            clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
+            signIn:
+              resolvers:
+                - resolver: usernameMatchingUserEntityName
     integrations:
       github:
         - host: github.com
