@@ -1,0 +1,14 @@
+# gitleaks configuration, read by the pre-commit hook and the CI secret scan.
+# The default rules all apply. The one path allowlisted is the Backstage app's
+# vendored Yarn release, a third-party bundle that contains Yarn's own public
+# package-search key and example tokens in its help text (ADR-0019). Nothing
+# authored in this repository is allowlisted.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored third-party Yarn release"
+paths = [
+  '''^backstage/app/\.yarn/releases/''',
+]

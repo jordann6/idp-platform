@@ -223,8 +223,14 @@ argocd-root:
 
 BACKSTAGE_CHART_VERSION := 2.10.2
 BACKSTAGE_TOKEN         := $(HOME)/.config/idp-platform/backstage-github-token
+BACKSTAGE_OAUTH_ID      := $(HOME)/.config/idp-platform/github-oauth-client-id
+BACKSTAGE_OAUTH_SECRET  := $(HOME)/.config/idp-platform/github-oauth-client-secret
+BACKSTAGE_APP           := ../../backstage/app
+BACKSTAGE_IMAGE_TAG     := $(shell git rev-parse --short HEAD:backstage/app 2>/dev/null)
+BACKSTAGE_IMAGE_TAR     := $(HOME)/.cache/idp-platform/idp-backstage-$(BACKSTAGE_IMAGE_TAG).tar
+NODE22                  := $(shell brew --prefix node@22 2>/dev/null)/bin
 
-.PHONY: backstage-token backstage-install
+.PHONY: backstage-token backstage-oauth backstage-build backstage-image backstage-install
 
 # ADR-0019: fine-grained PAT limited to this repo (contents and pull requests),
 # loaded from the Mac. The token never enters git.
@@ -233,6 +239,37 @@ backstage-token:
 	$(KCTL) create namespace backstage --dry-run=client -o yaml | $(KCTL) apply -f -
 	$(KCTL) -n backstage create secret generic backstage-github --from-file=GITHUB_TOKEN=$(BACKSTAGE_TOKEN) --dry-run=client -o yaml | $(KCTL) apply -f -
 
+# ADR-0019: the GitHub OAuth app's credentials for sign-in, loaded from the
+# Mac. The secret never enters git.
+backstage-oauth:
+	@test -s $(BACKSTAGE_OAUTH_ID) && test -s $(BACKSTAGE_OAUTH_SECRET) || (echo "Missing $(BACKSTAGE_OAUTH_ID) or $(BACKSTAGE_OAUTH_SECRET). See ADR-0019." && exit 1)
+	$(KCTL) create namespace backstage --dry-run=client -o yaml | $(KCTL) apply -f -
+	$(KCTL) -n backstage create secret generic backstage-github-oauth --from-file=AUTH_GITHUB_CLIENT_ID=$(BACKSTAGE_OAUTH_ID) --from-file=AUTH_GITHUB_CLIENT_SECRET=$(BACKSTAGE_OAUTH_SECRET) --dry-run=client -o yaml | $(KCTL) apply -f -
+
+# ADR-0019: build the platform's Backstage image from the committed app, tagged
+# with the app's git tree hash so the tag changes exactly when the code does.
+# Docker Desktop cannot run beside the 4 GiB VM on this Mac (ADR-0010), so
+# this runs with the VM stopped, and saves the image to a tar for
+# backstage-image. Needs Node 22 (brew install node@22).
+backstage-build:
+	@test -n "$(BACKSTAGE_IMAGE_TAG)" || (echo "backstage/app is not committed, so there is no image tag. Commit it first." && exit 1)
+	@test -z "$$(git status --porcelain -- $(BACKSTAGE_APP))" || (echo "backstage/app has uncommitted changes; the tag would not match the image." && exit 1)
+	cd $(BACKSTAGE_APP) && PATH=$(NODE22):$$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack yarn install --immutable
+	cd $(BACKSTAGE_APP) && PATH=$(NODE22):$$PATH corepack yarn tsc
+	cd $(BACKSTAGE_APP) && PATH=$(NODE22):$$PATH corepack yarn build:backend
+	cd $(BACKSTAGE_APP) && docker build --platform linux/arm64 -f packages/backend/Dockerfile -t idp-backstage:$(BACKSTAGE_IMAGE_TAG) .
+	mkdir -p $(dir $(BACKSTAGE_IMAGE_TAR))
+	docker save -o $(BACKSTAGE_IMAGE_TAR) idp-backstage:$(BACKSTAGE_IMAGE_TAG)
+
+# Import the saved image straight into K3s's containerd, so the chart runs it
+# with pullPolicy Never and no registry or pull credential is involved.
+backstage-image:
+	@test -s $(BACKSTAGE_IMAGE_TAR) || (echo "Missing $(BACKSTAGE_IMAGE_TAR). Run make backstage-build with the VM stopped." && exit 1)
+	limactl copy $(BACKSTAGE_IMAGE_TAR) $(VM):/tmp/idp-backstage.tar
+	limactl shell $(VM) sudo k3s ctr images import /tmp/idp-backstage.tar
+	limactl shell $(VM) rm -f /tmp/idp-backstage.tar
+
 backstage-install:
 	helm repo add backstage https://backstage.github.io/charts --force-update
-	helm upgrade --install backstage backstage/backstage --version $(BACKSTAGE_CHART_VERSION) --namespace backstage --create-namespace --kubeconfig $(KUBECONFIG) --kube-context idp-k3s --values backstage/values.yaml --wait --timeout 10m
+	@test -n "$(BACKSTAGE_IMAGE_TAG)" || (echo "backstage/app is not committed, so there is no image tag. Commit it first." && exit 1)
+	helm upgrade --install backstage backstage/backstage --version $(BACKSTAGE_CHART_VERSION) --namespace backstage --create-namespace --kubeconfig $(KUBECONFIG) --kube-context idp-k3s --values backstage/values.yaml --set backstage.image.tag=$(BACKSTAGE_IMAGE_TAG) --wait --timeout 10m
