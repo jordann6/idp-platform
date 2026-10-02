@@ -276,6 +276,14 @@ ci-publish:
 	@arn=$$(terraform -chdir=$(PUBLISH_TF) output -raw role_arn) && test -n "$$arn" && gh variable set IDP_CI_PUBLISH_ROLE_ARN --org $(APPS_ORG) --visibility all --body "$$arn"
 	@gh api orgs/$(APPS_ORG)/actions/variables/IDP_CI_PUBLISH_ROLE_ARN --jq '"\(.name) visibility=\(.visibility) role=\(.value | split("/") | last)"'
 
+# ADR-0024: the image half of a scaffolded service's teardown. The publish
+# role holds no delete, so this uses the local AWS credential. --force
+# removes the images with the repository.
+.PHONY: ecr-public-clean
+ecr-public-clean:
+	@echo "$(SERVICE)" | grep -Eq '^team-[a-z0-9-]+\.[a-z]([a-z0-9-]*[a-z0-9])?$$' || { echo "usage: make ecr-public-clean SERVICE=<team>.<name>"; exit 1; }
+	aws ecr-public delete-repository --region us-east-1 --repository-name $(APPS_ORG)/$(SERVICE) --force --query 'repository.repositoryName' --output text
+
 # ADR-0019: the GitHub OAuth app's credentials for sign-in, loaded from the
 # Mac. The secret never enters git.
 backstage-oauth:
