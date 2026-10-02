@@ -235,22 +235,36 @@ kyverno-install:
 	helm upgrade --install kyverno kyverno/kyverno --version $(KYVERNO_CHART_VERSION) --namespace kyverno --create-namespace --kubeconfig $(KUBECONFIG) --kube-context idp-k3s --values kyverno/values.yaml --wait --timeout 10m
 
 BACKSTAGE_CHART_VERSION := 2.10.2
-BACKSTAGE_TOKEN         := $(HOME)/.config/idp-platform/backstage-github-token
 BACKSTAGE_OAUTH_ID      := $(HOME)/.config/idp-platform/github-oauth-client-id
 BACKSTAGE_OAUTH_SECRET  := $(HOME)/.config/idp-platform/github-oauth-client-secret
+GITHUB_APP_DIR          := $(HOME)/.config/idp-platform
+GITHUB_APP_FILES        := $(foreach a,gitops scaffolder,$(foreach f,app-id client-id client-secret pem,$(GITHUB_APP_DIR)/github-app-$(a).$(f)))
 BACKSTAGE_APP           := ../../backstage/app
 BACKSTAGE_IMAGE_TAG     := $(shell git rev-parse --short HEAD:backstage/app 2>/dev/null)
 BACKSTAGE_IMAGE_TAR     := $(HOME)/.cache/idp-platform/idp-backstage-$(BACKSTAGE_IMAGE_TAG).tar
 NODE22                  := $(shell brew --prefix node@22 2>/dev/null)/bin
 
-.PHONY: backstage-token backstage-oauth backstage-build backstage-image backstage-install
+.PHONY: backstage-github-apps backstage-oauth backstage-build backstage-image backstage-install
 
-# ADR-0019: fine-grained PAT limited to this repo (contents and pull requests),
-# loaded from the Mac. The token never enters git.
-backstage-token:
-	@test -s $(BACKSTAGE_TOKEN) || (echo "Missing $(BACKSTAGE_TOKEN). See ADR-0019." && exit 1)
+# ADR-0024: the two GitHub Apps Backstage mints one-hour installation tokens
+# from (gitops on jordann6/idp-platform, scaffolder on idp-platform-apps),
+# loaded from the Mac and never committed. Every file must exist and be mode
+# 600. The PAT Secret from ADR-0019 is deleted, because Backstage falls back
+# to a configured token silently when no App matches.
+backstage-github-apps:
+	@for f in $(GITHUB_APP_FILES); do test -s $$f || { echo "Missing $$f. See ADR-0024."; exit 1; }; m=$$(stat -f %Lp $$f 2>/dev/null || stat -c %a $$f); test "$$m" = 600 || { echo "$$f is mode $$m, not 600. See ADR-0024."; exit 1; }; done
 	$(KCTL) create namespace backstage --dry-run=client -o yaml | $(KCTL) apply -f -
-	$(KCTL) -n backstage create secret generic backstage-github --from-file=GITHUB_TOKEN=$(BACKSTAGE_TOKEN) --dry-run=client -o yaml | $(KCTL) apply -f -
+	$(KCTL) -n backstage create secret generic backstage-github-apps \
+		--from-file=GITHUB_APP_GITOPS_ID=$(GITHUB_APP_DIR)/github-app-gitops.app-id \
+		--from-file=GITHUB_APP_GITOPS_CLIENT_ID=$(GITHUB_APP_DIR)/github-app-gitops.client-id \
+		--from-file=GITHUB_APP_GITOPS_CLIENT_SECRET=$(GITHUB_APP_DIR)/github-app-gitops.client-secret \
+		--from-file=GITHUB_APP_GITOPS_PRIVATE_KEY=$(GITHUB_APP_DIR)/github-app-gitops.pem \
+		--from-file=GITHUB_APP_SCAFFOLDER_ID=$(GITHUB_APP_DIR)/github-app-scaffolder.app-id \
+		--from-file=GITHUB_APP_SCAFFOLDER_CLIENT_ID=$(GITHUB_APP_DIR)/github-app-scaffolder.client-id \
+		--from-file=GITHUB_APP_SCAFFOLDER_CLIENT_SECRET=$(GITHUB_APP_DIR)/github-app-scaffolder.client-secret \
+		--from-file=GITHUB_APP_SCAFFOLDER_PRIVATE_KEY=$(GITHUB_APP_DIR)/github-app-scaffolder.pem \
+		--dry-run=client -o yaml | $(KCTL) apply -f -
+	$(KCTL) -n backstage delete secret backstage-github --ignore-not-found
 
 # ADR-0019: the GitHub OAuth app's credentials for sign-in, loaded from the
 # Mac. The secret never enters git.
