@@ -7,6 +7,7 @@ metadata:
 spec:
   targets:
     - ./groups.yaml
+    - ./users.yaml
     - ../templates/database/template.yaml
     - ../templates/webservice/template.yaml
     # Its own Location, because a glob that matches nothing is a read error
