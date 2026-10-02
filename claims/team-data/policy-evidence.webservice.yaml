@@ -1,0 +1,24 @@
+# Phase 5 evidence claim (ADR-0023): exists so the Kyverno background scan has
+# a live claim to report on. No GCP provider is installed while it exists, so
+# Crossplane composes nothing and nothing reaches GCP. Removed after the
+# PolicyReport is recorded.
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: WebService
+metadata:
+  name: policy-evidence
+  namespace: team-data
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: gcp
+  image: public.ecr.aws/nginx/nginx-unprivileged@sha256:59678856b05324b7f6371f26eb1520be7fcd8bdc8ab380fc4913db8503e5a842
+  port: 8080
+  healthPath: /
+  size: small
+  visibility: internal
+  maxInstances: 1
+  region: us-east
+  owner: jordann6
+  costCenter: cc-1001
+  environment: dev
