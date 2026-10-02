@@ -1,0 +1,19 @@
+# ADR-0019: people who may sign in. The GitHub sign-in resolver
+# (usernameMatchingUserEntityName) matches a GitHub username to a User of the
+# same name here, and refuses anyone without one, so adding a person to the
+# portal is a reviewed change to this file. memberOf is what a later admission
+# policy can check against the team a request is made for.
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: jordann6
+  annotations:
+    github.com/user-login: jordann6
+spec:
+  profile:
+    displayName: Jordan
+  memberOf:
+    - platform
+    - team-demo
+    - team-data
+    - team-ops

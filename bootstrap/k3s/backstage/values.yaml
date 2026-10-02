@@ -1,14 +1,19 @@
 # Backstage Helm values for the idp-platform control plane. Reached only by
-# kubectl port-forward on the Mac, so guest sign-in and in-memory SQLite are
-# acceptable (ADR-0019). The GitHub token comes from a Secret loaded by
-# make backstage-token and is never committed.
+# kubectl port-forward on the Mac, so in-memory SQLite is acceptable
+# (ADR-0019). The image is the platform's own build of backstage/app, imported
+# into K3s by make backstage-image rather than pulled, so nothing needs a
+# registry credential; the tag is the commit it was built from. The GitHub
+# token and the OAuth app credentials come from Secrets loaded by
+# make backstage-token and make backstage-oauth and are never committed.
 backstage:
   image:
-    registry: ghcr.io
-    repository: backstage/backstage
-    tag: "1.55.2"
+    registry: docker.io
+    repository: library/idp-backstage
+    tag: "__BACKSTAGE_IMAGE_TAG__"
+    pullPolicy: Never
   extraEnvVarsSecrets:
     - backstage-github
+    - backstage-github-oauth
   resources:
     requests:
       cpu: 100m
@@ -16,21 +21,41 @@ backstage:
     limits:
       memory: 1Gi
   appConfig:
+    # The chart starts Backstage with only this config (its ConfigMap), not
+    # the image's app-config files, so every value the frontend requires is
+    # set here; the new frontend system fails to render without app.title.
     app:
+      title: idp-platform
       baseUrl: http://localhost:7007
+    organization:
+      name: idp-platform
     backend:
       baseUrl: http://localhost:7007
       listen:
         port: 7007
       cors:
         origin: http://localhost:7007
+      # Reached only over a plain-HTTP localhost port-forward (ADR-0019).
+      # Helmet's default upgrade-insecure-requests makes Safari fetch every
+      # script from https://localhost:7007, where nothing listens, so the
+      # page renders blank; Chrome exempts localhost. Off for that reason.
+      csp:
+        upgrade-insecure-requests: false
       database:
         client: better-sqlite3
         connection: ":memory:"
+    # GitHub is the only sign-in. A GitHub user must match a User entity
+    # in backstage/catalog/users.yaml by name, or sign-in is refused; the
+    # guest provider is not in the image at all (ADR-0019).
     auth:
       providers:
-        guest:
-          dangerouslyAllowOutsideDevelopment: true
+        github:
+          development:
+            clientId: ${AUTH_GITHUB_CLIENT_ID}
+            clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
+            signIn:
+              resolvers:
+                - resolver: usernameMatchingUserEntityName
     integrations:
       github:
         - host: github.com
