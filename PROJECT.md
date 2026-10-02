@@ -6,6 +6,10 @@ Single Internal Developer Platform with three cloud backends (AWS, Azure, GCP). 
 
 A developer runs a Backstage Scaffolder template, picks a cloud and a size, and gets a repo, a pipeline, cloud infrastructure, and a catalog entry with no manual steps. Cloud choice should not change the developer's experience.
 
+### v1 scope
+
+v1 (Phases 1 to 5, complete 2026-10-02) delivers cloud infrastructure and a catalog entry through a reviewed pull request, on all three clouds, with admission policy enforced. The cloud comes from the team, not a form field (ADR-0012). "A repo, a pipeline" from the Goal is deliberately deferred: creating repositories needs a GitHub App with short-lived installation tokens instead of the single-repository token, and every scaffolded repository's CI draws on the same Actions minutes (ADR-0022, Deferred). That is the next phase, and it starts with an ADR.
+
 ## Stack
 
 - Control plane: K3s in a Lima VM on the MacBook (ADR-0010), configured by Ansible in bootstrap/k3s
@@ -45,6 +49,7 @@ Work in this order. Do not start the next phase until the current one has a Read
 3. Azure: xdatabase-azure Composition.
 4. xwebservice XRD and three Compositions, same order.
 5. Kyverno policies (required tags, no public databases), FinOps tagging hooks.
+6. Next: repo and pipeline scaffolding. A GitHub App with short-lived installation tokens, a scaffolder template that creates a repository with CI, and a decision on Actions minutes. Design and ADR before any build.
 
 ## Abstraction rules
 

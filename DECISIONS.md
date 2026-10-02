@@ -272,13 +272,15 @@ Consequences. No registry credential on the cluster and no vendor account depend
 
 ## ADR-0012: Cloud is assigned by team policy, not picked freely per resource
 
-Status: Proposed
+Status: Accepted (implemented in Phase 1, validated through GitOps on all three clouds by 2026-10-02)
 
 Context. The goal says a developer picks a cloud. In real organizations developers rarely choose a cloud per database. The cloud follows from an acquisition, a data residency rule, a customer contract, or where the team's other workloads already run. Presenting cloud choice as a free per-request pick invites the interview question of why anyone would want it, and has no good answer.
 
 Decision. Each team has a default cloud recorded on its Backstage group entity. The scaffolder template pre-fills the cloud from that default and hides the field unless the team is allowed to override it. The XR still carries the cloud as a label that selects the Composition, so the API does not change. Kyverno can later enforce that a namespace only creates XRs for its team's allowed clouds.
 
 Consequences. The developer experience stays identical across clouds, which is the real promise. The multi-cloud value is framed as one platform serving teams that live on different clouds, which matches how platform teams actually operate. Adds a small amount of catalog metadata and one template conditional.
+
+As built. Each team Group in backstage/catalog/groups.yaml carries the annotation platform.jordandesigns.io/default-cloud (team-demo aws, team-data gcp, team-ops azure). The Database and WebService templates look the team up with catalog:fetch and write that annotation into the claim's cloud label, so the Composition is selected from the team, never from a form field. Every GitOps proof ran this way: Databases for team-demo on AWS, team-data on GCP (PR #7), and team-ops on Azure (PR #13), and WebServices for team-data (PR #26), team-ops (PR #34), and team-demo (PR #40). Two parts of the decision are narrower than written. The templates have no cloud field at all, so there is no per-team override; a team that needs a second cloud today needs a second Group, and an override list on the Group is the extension point if one is ever needed. And no admission policy ties a namespace to its team's cloud: the cloud label on a claim written by hand into a team folder would be honored, so the binding is enforced by the template and by review of the pull request, not by Kyverno. Both are recorded as deliberate v1 scope rather than gaps in the paved road, since the template is the only supported way to write a claim.
 
 ---
 
