@@ -36,6 +36,7 @@ jobs:
       azure_crossplane_auth: ${{ steps.diff.outputs.azure_crossplane_auth }}
       azure_budget: ${{ steps.diff.outputs.azure_budget }}
       azure_network: ${{ steps.diff.outputs.azure_network }}
+      azure_apps: ${{ steps.diff.outputs.azure_apps }}
       gcp_project: ${{ steps.diff.outputs.gcp_project }}
       gcp_crossplane_auth: ${{ steps.diff.outputs.gcp_crossplane_auth }}
       gcp_budget: ${{ steps.diff.outputs.gcp_budget }}
@@ -135,6 +136,13 @@ jobs:
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/azure/network
+
+  static-azure-apps:
+    needs: changes
+    if: needs.changes.outputs.azure_apps == 'true'
+    uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
+    with:
+      terraform_dir: bootstrap/azure/apps
 
   static-gcp-project:
     needs: changes

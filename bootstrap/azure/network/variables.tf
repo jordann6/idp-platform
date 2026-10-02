@@ -15,7 +15,7 @@ variable "location" {
 }
 
 variable "storage_service_tag" {
-  description = "Regional Storage service tag the delegated subnet may reach for WAL archival. Must match location."
+  description = "Regional Storage service tag the delegated subnets may reach: WAL archival for Postgres, image layers for the ACR cache. Must match location."
   type        = string
   default     = "Storage.EastUS2"
 }
@@ -30,6 +30,18 @@ variable "postgres_subnet_cidr" {
   description = "Subnet delegated to Postgres Flexible Server. Cannot grow once a server exists, so it starts at /24."
   type        = string
   default     = "10.80.1.0/24"
+}
+
+variable "apps_subnet_cidr" {
+  description = "Subnet delegated to the Container Apps environment (ADR-0022). /27 is the workload profiles minimum and cannot change once an environment uses it."
+  type        = string
+  default     = "10.80.2.0/27"
+}
+
+variable "acr_service_tag" {
+  description = "Regional Azure Container Registry service tag the apps subnet may reach for the per-session image cache. Must match location."
+  type        = string
+  default     = "AzureContainerRegistry.EastUS2"
 }
 
 variable "owner" {

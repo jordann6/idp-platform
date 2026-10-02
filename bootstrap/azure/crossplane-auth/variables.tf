@@ -40,7 +40,7 @@ variable "crossplane_namespace" {
 variable "provider_service_accounts" {
   description = "Fixed provider service account names set by DeploymentRuntimeConfig (ADR-0011). Azure matches subjects exactly, one federated credential each, 20 maximum."
   type        = list(string)
-  default     = ["provider-family-azure", "provider-azure-dbforpostgresql"]
+  default     = ["provider-family-azure", "provider-azure-dbforpostgresql", "provider-azure-containerapp"]
 
   validation {
     condition     = length(var.provider_service_accounts) <= 20

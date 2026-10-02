@@ -27,12 +27,14 @@ variable "start_date" {
 }
 
 variable "resource_group_names" {
-  description = "Every resource group the platform owns: identity, shared network, the data group Crossplane creates servers in, and the Phase 0 verification group."
+  description = "Every resource group the platform owns: identity, shared network, the data group Crossplane creates servers in, the apps group for web services, the Container Apps environment's managed infrastructure group (public IPs and load balancer, named by bootstrap/azure/apps so it can be listed here), and the Phase 0 verification group."
   type        = list(string)
   default = [
     "rg-idp-platform-identity",
     "rg-idp-platform-us-east-network",
     "rg-idp-platform-us-east-data",
+    "rg-idp-platform-us-east-apps",
+    "rg-idp-platform-us-east-apps-infra",
     "rg-idp-platform-verify",
   ]
 }

@@ -1,0 +1,179 @@
+# xwebservice on Azure: Container Apps on the shared environment (ADR-0022).
+# Pipeline: load the platform region entry and the per-session web values,
+# compose one container app and patch its URL back to the XR, then mark
+# readiness. There is no load balancer, certificate, or DNS per claim: the
+# environment serves every app at an HTTPS azurecontainerapps.io name. The
+# environment, the ECR Public cache registry, and the runtime identity are
+# bootstrap (bootstrap/azure/apps and crossplane-auth), never per claim.
+#
+# External names (ADR-0017), from provider-upjet-azure v2.7.0
+# config/externalname.go: ContainerApp is TemplatedStringAsIdentifier on name,
+# so the name is set explicitly and a rebuilt control plane re-adopts the app
+# automatically.
+#
+# Provider resource config checked (config/namespaced/containerapp/config.go):
+# secret names are marked sensitive and secret is ignored by the late
+# initializer; there are no generated secrets and no connection details, and
+# this Composition composes no secret, so it composes no Secret either.
+#
+# Schema, from apis/namespaced/containerapp/v1beta1: template, ingress, and
+# identity are objects; container, env, startupProbe, trafficWeight, and
+# registry are lists. crossplane render does not check this, so a container
+# app built from this template is also server dry-run against the live CRD
+# before a change merges (ADR-0022).
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xwebservice-azure
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    platform.jordandesigns.io/cloud: azure
+spec:
+  compositeTypeRef:
+    apiVersion: platform.jordandesigns.io/v1alpha1
+    kind: WebService
+  mode: Pipeline
+  pipeline:
+    - step: load-platform-region
+      functionRef:
+        name: function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Selector
+              selector:
+                mode: Single
+                matchLabels:
+                  - key: platform.jordandesigns.io/region
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.region
+            # Applied by make azure-apps from Terraform outputs, not from git.
+            - type: Reference
+              ref:
+                name: platform-azure-apps
+
+    - step: compose-webservice
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $env := index .context "apiextensions.crossplane.io/environment" }}
+            {{- $azure := $env.azure }}
+            {{- $apps := $env.azureApps }}
+            {{- $ns := $xr.metadata.namespace }}
+            {{- $name := $xr.metadata.name }}
+            {{- $spec := $xr.spec }}
+            {{- /*
+              Container app names are 2 to 32 lowercase letters, digits, and
+              single hyphens, under idp-<ns>-<name> for longer names. Kept whole
+              when it fits, otherwise truncated to 23 plus an 8 character hash,
+              deterministic either way (the ADR-0021 pattern).
+            */}}
+            {{- $base := printf "idp-%s-%s" $ns $name }}
+            {{- $app := $base }}
+            {{- if gt (len $base) 32 }}
+            {{- $app = printf "%s-%s" ($base | trunc 23 | trimSuffix "-") (printf "%s/%s" $ns $name | sha256sum | trunc 8) }}
+            {{- end }}
+            {{- /*
+              Image supply (ADR-0022). Pulls go through the per-session ACR cache
+              of ECR Public, never the internet, so the image must come from
+              public.ecr.aws; the reference is rewritten to the cache and keeps
+              its digest.
+            */}}
+            {{- if not (hasPrefix "public.ecr.aws/" $spec.image) }}
+            {{- fail (printf "on Azure the image must come from public.ecr.aws, got %s (ADR-0022)" $spec.image) }}
+            {{- end }}
+            {{- $image := printf "%s/ecr-public/%s" $apps.cacheRegistry (trimPrefix "public.ecr.aws/" $spec.image) }}
+            {{- $public := eq $spec.visibility "public" }}
+            {{- /* T-shirt sizes to Consumption CPU and memory pairs. */}}
+            {{- $cpu := dict "small" 0.25 "medium" 0.5 "large" 1 }}
+            {{- $mem := dict "small" "0.5Gi" "medium" "1Gi" "large" "2Gi" }}
+            ---
+            apiVersion: containerapp.azure.m.upbound.io/v1beta1
+            kind: ContainerApp
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: app
+                crossplane.io/external-name: {{ $app }}
+              labels:
+                platform.jordandesigns.io/component: app
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: azure
+              forProvider:
+                resourceGroupName: {{ $azure.appsResourceGroup }}
+                containerAppEnvironmentId: {{ $apps.environmentId }}
+                workloadProfileName: Consumption
+                revisionMode: Single
+                tags:
+                  Project: idp-platform
+                  ManagedBy: crossplane
+                  Owner: {{ $spec.owner }}
+                  CostCenter: {{ $spec.costCenter }}
+                  Environment: {{ $spec.environment }}
+                  Team: {{ $ns }}
+                  WebService: {{ $name }}
+                # The role-less runtime identity, used only to pull from the
+                # cache; attaching it is the one identity the provider may assign.
+                identity:
+                  type: UserAssigned
+                  identityIds:
+                    - {{ $apps.runtimeIdentityId }}
+                registry:
+                  - server: {{ $apps.cacheRegistry }}
+                    identity: {{ $apps.runtimeIdentityId }}
+                # Visibility is a property of the environment, which is external,
+                # so public is external ingress and internal is ingress reachable
+                # only from apps in the same environment (a recorded leak). HTTP
+                # is redirected to HTTPS.
+                ingress:
+                  externalEnabled: {{ $public }}
+                  targetPort: {{ $spec.port }}
+                  transport: auto
+                  allowInsecureConnections: false
+                  trafficWeight:
+                    - latestRevision: true
+                      percentage: 100
+                template:
+                  # Scales to zero between requests; maxInstances is the ceiling.
+                  minReplicas: 0
+                  maxReplicas: {{ $spec.maxInstances }}
+                  container:
+                    - name: app
+                      image: {{ $image }}
+                      cpu: {{ index $cpu $spec.size }}
+                      memory: {{ index $mem $spec.size }}
+                      {{- with $spec.env }}
+                      env:
+                        {{- range $k, $v := . }}
+                        - name: {{ $k }}
+                          value: {{ $v | quote }}
+                        {{- end }}
+                      {{- end }}
+                      startupProbe:
+                        - transport: HTTP
+                          path: {{ $spec.healthPath }}
+                          port: {{ $spec.port }}
+                          intervalSeconds: 5
+                          failureCountThreshold: 10
+            ---
+            {{- $fqdn := dig "observed" "resources" "app" "resource" "status" "atProvider" "ingress" "fqdn" "" $ }}
+            apiVersion: {{ $xr.apiVersion }}
+            kind: {{ $xr.kind }}
+            status:
+              {{- if $fqdn }}
+              url: {{ printf "https://%s" $fqdn }}
+              {{- end }}
+
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready

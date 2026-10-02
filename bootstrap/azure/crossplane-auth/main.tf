@@ -154,3 +154,74 @@ resource "azurerm_role_assignment" "network_join" {
   principal_id       = azurerm_user_assigned_identity.provider.principal_id
   principal_type     = "ServicePrincipal"
 }
+
+# Phase 4 (ADR-0022): what xwebservice-azure needs, on the apps group only.
+# Container app lifecycle, plus read and join on the shared environment,
+# which is a linked authorization when an app is created in it. No
+# environment write: the environment is Terraform's (bootstrap/azure/apps).
+# listSecrets is read by the provider on every observe of a container app.
+resource "azurerm_role_definition" "containerapps" {
+  name        = "idp-crossplane-provider-azure-containerapps"
+  scope       = local.network.apps_resource_group_id
+  description = "Container Apps lifecycle for the idp-platform Crossplane Azure provider, apps resource group only."
+
+  permissions {
+    actions = [
+      "Microsoft.App/containerApps/read",
+      "Microsoft.App/containerApps/write",
+      "Microsoft.App/containerApps/delete",
+      "Microsoft.App/containerApps/listSecrets/action",
+      "Microsoft.App/containerApps/revisions/read",
+      "Microsoft.App/managedEnvironments/read",
+      "Microsoft.App/managedEnvironments/join/action",
+    ]
+    not_actions = []
+  }
+
+  assignable_scopes = [local.network.apps_resource_group_id]
+}
+
+resource "azurerm_role_assignment" "containerapps" {
+  scope              = local.network.apps_resource_group_id
+  role_definition_id = azurerm_role_definition.containerapps.role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.provider.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+# The identity every WebService runs as and pulls its image with. It holds no
+# role here; bootstrap/azure/apps grants it AcrPull on the per-session cache
+# and nothing else, so a web service can reach no Azure API. The GCP
+# counterpart is idp-webservice-runtime in bootstrap/gcp/web.
+resource "azurerm_user_assigned_identity" "webservice_runtime" {
+  name                = "id-idp-webservice-runtime"
+  resource_group_name = azurerm_resource_group.identity.name
+  location            = local.network.location
+  tags                = local.tags
+}
+
+# Attaching a user-assigned identity to a container app is authorized as
+# assign on that identity, the Azure counterpart of iam:PassRole on AWS and
+# actAs on GCP. Granted on the runtime identity alone, not on its group, so
+# the provider cannot attach its own identity or any other to a workload.
+resource "azurerm_role_definition" "assign_runtime_identity" {
+  name        = "idp-crossplane-provider-azure-assign-runtime"
+  scope       = azurerm_resource_group.identity.id
+  description = "Attach the web service runtime identity to container apps, for the idp-platform Crossplane Azure provider."
+
+  permissions {
+    actions = [
+      "Microsoft.ManagedIdentity/userAssignedIdentities/read",
+      "Microsoft.ManagedIdentity/userAssignedIdentities/assign/action",
+    ]
+    not_actions = []
+  }
+
+  assignable_scopes = [azurerm_resource_group.identity.id]
+}
+
+resource "azurerm_role_assignment" "assign_runtime_identity" {
+  scope              = azurerm_user_assigned_identity.webservice_runtime.id
+  role_definition_id = azurerm_role_definition.assign_runtime_identity.role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.provider.principal_id
+  principal_type     = "ServicePrincipal"
+}

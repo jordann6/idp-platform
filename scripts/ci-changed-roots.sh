@@ -16,6 +16,7 @@ aws_ingress=bootstrap/aws/ingress
 azure_crossplane_auth=bootstrap/azure/crossplane-auth
 azure_budget=bootstrap/azure/budget
 azure_network=bootstrap/azure/network
+azure_apps=bootstrap/azure/apps
 gcp_project=bootstrap/gcp/project
 gcp_crossplane_auth=bootstrap/gcp/crossplane-auth
 gcp_budget=bootstrap/gcp/budget
