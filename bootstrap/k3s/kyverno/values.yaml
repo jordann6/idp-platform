@@ -10,6 +10,31 @@ admissionController:
 reportsController:
   enabled: true
   replicas: 1
+  # Kyverno cannot grant itself read access to custom kinds, so a policy on
+  # them is enforced at admission but not ready for reporting until the
+  # reports controller can get, list, and watch them (ADR-0023): the claims
+  # and every composed resource kind a policy checks.
+  rbac:
+    clusterRole:
+      extraResources:
+        - apiGroups: ["platform.jordandesigns.io"]
+          resources: ["databases", "webservices"]
+        - apiGroups: ["rds.aws.m.upbound.io"]
+          resources: ["instances"]
+        - apiGroups: ["ecs.aws.m.upbound.io"]
+          resources: ["services", "taskdefinitions"]
+        - apiGroups: ["elbv2.aws.m.upbound.io"]
+          resources: ["lbtargetgroups", "lblistenerrules"]
+        - apiGroups: ["sql.gcp.m.upbound.io"]
+          resources: ["databaseinstances"]
+        - apiGroups: ["cloudrun.gcp.m.upbound.io"]
+          resources: ["v2services"]
+        - apiGroups: ["dbforpostgresql.azure.m.upbound.io"]
+          resources: ["flexibleservers"]
+        - apiGroups: ["containerapp.azure.m.upbound.io"]
+          resources: ["containerapps"]
+        - apiGroups: ["rbac.authorization.k8s.io"]
+          resources: ["rolebindings"]
 
 backgroundController:
   enabled: false
