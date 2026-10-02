@@ -74,3 +74,15 @@ resource "google_service_account_iam_member" "provider_act_as" {
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${local.provider_email}"
 }
+
+# Cloud Run resolves the image digest with the deployer's credentials at
+# create time, so the provider needs read on the cache even though the Cloud
+# Run service agent does the pull (Docker-GetManifest was denied to the
+# provider on the first live create, ADR-0022). Read on this one repository,
+# not at project level.
+resource "google_artifact_registry_repository_iam_member" "provider_reader" {
+  location   = google_artifact_registry_repository.ecr_public.location
+  repository = google_artifact_registry_repository.ecr_public.name
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${local.provider_email}"
+}
