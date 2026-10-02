@@ -1,0 +1,15 @@
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: Database
+metadata:
+  name: db-by-argocd
+  namespace: team-demo
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: aws
+  size: small
+  region: us-east
+  owner: jordann6
+  costCenter: cc-1001
+  environment: dev

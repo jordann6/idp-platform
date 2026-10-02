@@ -1,0 +1,40 @@
+# ADR-0022 fail-open follow-up. On AWS, visibility internal needs the internal
+# ALB, which bootstrap/aws/ingress leaves off (internal_alb_enabled = false).
+# The Composition already fails closed if it is asked anyway; this refuses the
+# request at admission so it never reaches the Composition. The bootstrap
+# default is encoded here as a constant rather than looked up at admission:
+# the lookup could not be exercised in CI (the Kyverno CLI cannot mock a
+# Crossplane EnvironmentConfig), and a constant fails closed when no AWS
+# session is up. Enabling the internal ALB is therefore a reviewed change to
+# both the Terraform variable and internalAlbEnabled below.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
+metadata:
+  name: deny-internal-webservice-aws
+  annotations:
+    policies.kyverno.io/title: Internal web services on AWS need the internal ALB
+    platform.jordandesigns.io/control: "SOC2 CC6.6; CIS 5.2 (limit network exposure)"
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["platform.jordandesigns.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["webservices"]
+  variables:
+    - name: internalAlbEnabled
+      expression: "false"
+    - name: cloud
+      expression: >-
+        has(object.spec.crossplane) && has(object.spec.crossplane.compositionSelector) && has(object.spec.crossplane.compositionSelector.matchLabels)
+        && 'platform.jordandesigns.io/cloud' in object.spec.crossplane.compositionSelector.matchLabels
+          ? object.spec.crossplane.compositionSelector.matchLabels['platform.jordandesigns.io/cloud'] : ''
+    - name: internal
+      expression: "has(object.spec.visibility) && object.spec.visibility == 'internal'"
+  validations:
+    - expression: "variables.cloud != 'aws' || !variables.internal || variables.internalAlbEnabled"
+      message: "visibility internal on AWS needs the internal ALB, which is disabled (internal_alb_enabled in bootstrap/aws/ingress); use visibility public."

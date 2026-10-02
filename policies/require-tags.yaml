@@ -1,0 +1,31 @@
+# Every paved-road claim carries the attribution the cloud tags are built from
+# (owner, cost center, environment) and lives in a team namespace, which
+# becomes the Team tag. The XRD types these fields; this policy is the control
+# record and the admission-time check that they are present.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
+metadata:
+  name: require-tags
+  annotations:
+    policies.kyverno.io/title: Require attribution on every claim
+    platform.jordandesigns.io/control: "SOC2 CC6.1, CC3.2; CIS 1.1 (asset inventory)"
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["platform.jordandesigns.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["databases", "webservices"]
+  validations:
+    - expression: "object.metadata.namespace.startsWith('team-')"
+      message: "Claims may only be created in a team-* namespace, which becomes the Team tag."
+    - expression: "has(object.spec.owner) && object.spec.owner != ''"
+      message: "spec.owner is required; it becomes the Owner tag."
+    - expression: "has(object.spec.costCenter) && object.spec.costCenter != ''"
+      message: "spec.costCenter is required; it becomes the CostCenter tag."
+    - expression: "has(object.spec.environment) && object.spec.environment != ''"
+      message: "spec.environment is required; it becomes the Environment tag."

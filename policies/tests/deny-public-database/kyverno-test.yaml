@@ -1,0 +1,45 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: deny-public-database
+policies:
+- ../../deny-public-database.yaml
+resources:
+- resources.yaml
+results:
+- isValidatingPolicy: true
+  policy: deny-public-database
+  kind: Instance
+  resources:
+  - good-rds
+  result: pass
+- isValidatingPolicy: true
+  policy: deny-public-database
+  kind: DatabaseInstance
+  resources:
+  - good-sql
+  result: pass
+- isValidatingPolicy: true
+  policy: deny-public-database
+  kind: FlexibleServer
+  resources:
+  - good-pg
+  result: pass
+- isValidatingPolicy: true
+  policy: deny-public-database
+  kind: Instance
+  resources:
+  - bad-rds
+  result: fail
+- isValidatingPolicy: true
+  policy: deny-public-database
+  kind: DatabaseInstance
+  resources:
+  - bad-sql
+  result: fail
+- isValidatingPolicy: true
+  policy: deny-public-database
+  kind: FlexibleServer
+  resources:
+  - bad-pg
+  result: fail

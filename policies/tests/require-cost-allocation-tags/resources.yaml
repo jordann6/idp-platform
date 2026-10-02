@@ -1,0 +1,68 @@
+apiVersion: rds.aws.m.upbound.io/v1beta1
+kind: Instance
+metadata:
+  name: good-rds
+  namespace: team-demo
+spec:
+  forProvider:
+    tags:
+      CostCenter: cc-1001
+---
+apiVersion: cloudrun.gcp.m.upbound.io/v1beta1
+kind: V2Service
+metadata:
+  name: good-run
+  namespace: team-demo
+spec:
+  forProvider:
+    labels:
+      cost-center: cc-1001
+---
+apiVersion: sql.gcp.m.upbound.io/v1beta1
+kind: DatabaseInstance
+metadata:
+  name: good-sql
+  namespace: team-demo
+spec:
+  forProvider:
+    settings:
+      userLabels:
+        cost_center: cc-1001
+---
+apiVersion: containerapp.azure.m.upbound.io/v1beta1
+kind: ContainerApp
+metadata:
+  name: good-app
+  namespace: team-demo
+spec:
+  forProvider:
+    tags:
+      CostCenter: cc-1001
+---
+apiVersion: rds.aws.m.upbound.io/v1beta1
+kind: Instance
+metadata:
+  name: bad-rds
+  namespace: team-demo
+spec:
+  forProvider:
+    tags:
+      Owner: x
+---
+apiVersion: cloudrun.gcp.m.upbound.io/v1beta1
+kind: V2Service
+metadata:
+  name: bad-run
+  namespace: team-demo
+spec:
+  forProvider:
+    labels:
+      CostCenter: cc-1001
+---
+apiVersion: containerapp.azure.m.upbound.io/v1beta1
+kind: ContainerApp
+metadata:
+  name: bad-app
+  namespace: team-demo
+spec:
+  forProvider: {}

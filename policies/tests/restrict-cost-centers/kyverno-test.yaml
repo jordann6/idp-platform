@@ -1,0 +1,21 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-cost-centers
+policies:
+- ../../restrict-cost-centers.yaml
+resources:
+- resources.yaml
+results:
+- isValidatingPolicy: true
+  policy: restrict-cost-centers
+  kind: WebService
+  resources:
+  - good-web
+  result: pass
+- isValidatingPolicy: true
+  policy: restrict-cost-centers
+  kind: WebService
+  resources:
+  - bad-cost
+  result: fail

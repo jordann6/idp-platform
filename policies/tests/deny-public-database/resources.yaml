@@ -1,0 +1,56 @@
+apiVersion: rds.aws.m.upbound.io/v1beta1
+kind: Instance
+metadata:
+  name: good-rds
+  namespace: team-demo
+spec:
+  forProvider:
+    publiclyAccessible: false
+---
+apiVersion: sql.gcp.m.upbound.io/v1beta1
+kind: DatabaseInstance
+metadata:
+  name: good-sql
+  namespace: team-demo
+spec:
+  forProvider:
+    settings:
+      ipConfiguration:
+        ipv4Enabled: false
+---
+apiVersion: dbforpostgresql.azure.m.upbound.io/v1beta1
+kind: FlexibleServer
+metadata:
+  name: good-pg
+  namespace: team-demo
+spec:
+  forProvider:
+    publicNetworkAccessEnabled: false
+---
+apiVersion: rds.aws.m.upbound.io/v1beta1
+kind: Instance
+metadata:
+  name: bad-rds
+  namespace: team-demo
+spec:
+  forProvider:
+    publiclyAccessible: true
+---
+apiVersion: sql.gcp.m.upbound.io/v1beta1
+kind: DatabaseInstance
+metadata:
+  name: bad-sql
+  namespace: team-demo
+spec:
+  forProvider:
+    settings:
+      ipConfiguration:
+        ipv4Enabled: true
+---
+apiVersion: dbforpostgresql.azure.m.upbound.io/v1beta1
+kind: FlexibleServer
+metadata:
+  name: bad-pg
+  namespace: team-demo
+spec:
+  forProvider: {}

@@ -1,0 +1,36 @@
+# TLS in transit where it is a setting a resource could get wrong: Cloud SQL
+# must refuse unencrypted connections, and a container app must not accept
+# plain HTTP. RDS Postgres 17 forces SSL by default and Flexible Server
+# requires secure transport by default; the AWS ALB has only an HTTPS listener,
+# which is Terraform in bootstrap/aws/ingress, outside admission.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
+metadata:
+  name: require-tls-in-transit
+  annotations:
+    policies.kyverno.io/title: Encrypt connections in transit
+    platform.jordandesigns.io/control: "SOC2 CC6.7; CIS 3.10 (encrypt data in transit)"
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["sql.gcp.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["databaseinstances"]
+      - apiGroups: ["containerapp.azure.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["containerapps"]
+  variables:
+    - name: fp
+      expression: "object.spec.forProvider"
+  validations:
+    - expression: >-
+        object.apiVersion.startsWith('sql.gcp.m.upbound.io/')
+          ? has(variables.fp.settings) && has(variables.fp.settings.ipConfiguration) && has(variables.fp.settings.ipConfiguration.sslMode) && variables.fp.settings.ipConfiguration.sslMode in ['ENCRYPTED_ONLY', 'TRUSTED_CLIENT_CERTIFICATE_REQUIRED']
+          : !has(variables.fp.ingress) || !has(variables.fp.ingress.allowInsecureConnections) || variables.fp.ingress.allowInsecureConnections == false
+      message: "Cloud SQL must set sslMode ENCRYPTED_ONLY or TRUSTED_CLIENT_CERTIFICATE_REQUIRED; container apps must not allow insecure (HTTP) connections."

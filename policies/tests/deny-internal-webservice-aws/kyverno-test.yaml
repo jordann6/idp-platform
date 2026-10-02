@@ -1,0 +1,22 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: deny-internal-webservice-aws
+policies:
+- ../../deny-internal-webservice-aws.yaml
+resources:
+- resources.yaml
+results:
+- isValidatingPolicy: true
+  policy: deny-internal-webservice-aws
+  kind: WebService
+  resources:
+  - good-public
+  - good-gcp-internal
+  result: pass
+- isValidatingPolicy: true
+  policy: deny-internal-webservice-aws
+  kind: WebService
+  resources:
+  - bad-aws-internal
+  result: fail
