@@ -1,0 +1,44 @@
+# No database is reachable from the internet. The Database API has no public
+# option at all; this checks what the Compositions actually compose, so a
+# Composition bug cannot open a database. Each cloud spells it differently:
+# RDS publiclyAccessible, Cloud SQL a public IPv4 address, Flexible Server
+# public network access. Each must be explicitly off.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
+metadata:
+  name: deny-public-database
+  annotations:
+    policies.kyverno.io/title: No publicly reachable database
+    platform.jordandesigns.io/control: "SOC2 CC6.6, CC6.1; CIS 5.2 (limit network exposure)"
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["rds.aws.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["instances"]
+      - apiGroups: ["sql.gcp.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["databaseinstances"]
+      - apiGroups: ["dbforpostgresql.azure.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["flexibleservers"]
+  variables:
+    - name: group
+      expression: "object.apiVersion.split('/')[0]"
+    - name: fp
+      expression: "object.spec.forProvider"
+  validations:
+    - expression: >-
+        variables.group == 'rds.aws.m.upbound.io'
+          ? has(variables.fp.publiclyAccessible) && variables.fp.publiclyAccessible == false
+          : variables.group == 'sql.gcp.m.upbound.io'
+            ? has(variables.fp.settings) && has(variables.fp.settings.ipConfiguration) && has(variables.fp.settings.ipConfiguration.ipv4Enabled) && variables.fp.settings.ipConfiguration.ipv4Enabled == false
+            : has(variables.fp.publicNetworkAccessEnabled) && variables.fp.publicNetworkAccessEnabled == false
+      message: "Databases must have public access explicitly disabled (RDS publiclyAccessible, Cloud SQL ipv4Enabled, Flexible Server publicNetworkAccessEnabled)."

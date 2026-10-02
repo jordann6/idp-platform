@@ -1,0 +1,33 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: require-tls-in-transit
+policies:
+- ../../require-tls-in-transit.yaml
+resources:
+- resources.yaml
+results:
+- isValidatingPolicy: true
+  policy: require-tls-in-transit
+  kind: DatabaseInstance
+  resources:
+  - good-sql
+  result: pass
+- isValidatingPolicy: true
+  policy: require-tls-in-transit
+  kind: ContainerApp
+  resources:
+  - good-app
+  result: pass
+- isValidatingPolicy: true
+  policy: require-tls-in-transit
+  kind: DatabaseInstance
+  resources:
+  - bad-sql
+  result: fail
+- isValidatingPolicy: true
+  policy: require-tls-in-transit
+  kind: ContainerApp
+  resources:
+  - bad-app
+  result: fail

@@ -1,0 +1,37 @@
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: WebService
+metadata:
+  name: good-web
+  namespace: team-demo
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: aws
+  size: small
+  region: us-east
+  owner: jordann6
+  costCenter: cc-1001
+  environment: dev
+  image: public.ecr.aws/nginx/nginx-unprivileged@sha256:59678856b05324b7f6371f26eb1520be7fcd8bdc8ab380fc4913db8503e5a842
+  port: 8080
+  visibility: public
+---
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: WebService
+metadata:
+  name: bad-cost
+  namespace: team-demo
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: aws
+  size: small
+  region: us-east
+  owner: jordann6
+  costCenter: cc-9999
+  environment: dev
+  image: public.ecr.aws/nginx/nginx-unprivileged@sha256:59678856b05324b7f6371f26eb1520be7fcd8bdc8ab380fc4913db8503e5a842
+  port: 8080
+  visibility: public

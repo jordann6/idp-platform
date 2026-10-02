@@ -1,0 +1,32 @@
+# Change management through GitOps: a claim reaches the cluster only through
+# Argo CD syncing a reviewed commit. Crossplane may update the XRs it manages.
+# Server dry runs are allowed, because they persist nothing and are how a
+# claim is checked before merge. Anything else, including a person with
+# kubectl, is refused; break-glass is a PolicyException, which is itself a
+# reviewed change.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
+metadata:
+  name: require-review-source
+  annotations:
+    policies.kyverno.io/title: Claims arrive only through GitOps
+    platform.jordandesigns.io/control: "SOC2 CC8.1; CIS 4.x (change control)"
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["platform.jordandesigns.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["databases", "webservices"]
+  variables:
+    - name: allowed
+      expression: >-
+        ['system:serviceaccount:argocd:argocd-application-controller',
+         'system:serviceaccount:crossplane-system:crossplane']
+  validations:
+    - expression: "request.dryRun == true || request.userInfo.username in variables.allowed"
+      messageExpression: "'claims are delivered by Argo CD from a reviewed commit, not applied by ' + request.userInfo.username"

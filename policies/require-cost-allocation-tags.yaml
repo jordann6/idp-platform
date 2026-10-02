@@ -1,0 +1,63 @@
+# FinOps tagging hook: every billable resource a Composition creates carries
+# the claim's cost center, so cloud billing can allocate it. Each cloud stores
+# it in a different place, which is itself a recorded leak: tags.CostCenter on
+# AWS and Azure, labels['cost-center'] on Cloud Run, and
+# settings.userLabels.cost_center on Cloud SQL (GCP labels allow no capitals,
+# and Cloud SQL keeps instance labels under settings).
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
+metadata:
+  name: require-cost-allocation-tags
+  annotations:
+    policies.kyverno.io/title: Cost center on every billable resource
+    platform.jordandesigns.io/control: "SOC2 CC3.2; FinOps cost allocation"
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["rds.aws.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["instances"]
+      - apiGroups: ["ecs.aws.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["services", "taskdefinitions"]
+      - apiGroups: ["elbv2.aws.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["lbtargetgroups", "lblistenerrules"]
+      - apiGroups: ["sql.gcp.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["databaseinstances"]
+      - apiGroups: ["cloudrun.gcp.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["v2services"]
+      - apiGroups: ["dbforpostgresql.azure.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["flexibleservers"]
+      - apiGroups: ["containerapp.azure.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["containerapps"]
+  variables:
+    - name: group
+      expression: "object.apiVersion.split('/')[0]"
+    - name: fp
+      expression: "object.spec.forProvider"
+    - name: cost
+      expression: >-
+        variables.group == 'sql.gcp.m.upbound.io'
+          ? (has(variables.fp.settings) && has(variables.fp.settings.userLabels) && 'cost_center' in variables.fp.settings.userLabels ? variables.fp.settings.userLabels['cost_center'] : '')
+          : variables.group == 'cloudrun.gcp.m.upbound.io'
+            ? (has(variables.fp.labels) && 'cost-center' in variables.fp.labels ? variables.fp.labels['cost-center'] : '')
+            : (has(variables.fp.tags) && 'CostCenter' in variables.fp.tags ? variables.fp.tags['CostCenter'] : '')
+  validations:
+    - expression: "variables.cost.matches('^cc-[0-9]{4}$')"
+      message: "Every billable resource must carry the claim's cost center (tags.CostCenter, Cloud Run labels cost-center, Cloud SQL settings.userLabels.cost_center)."

@@ -8,6 +8,32 @@ Format: Context, Decision, Consequences.
 
 ---
 
+## ADR-0023: Admission policies are Kyverno ValidatingPolicies, each tied to a control and a test
+
+Status: Proposed (policies tested offline and accepted by the live API server; live enforcement and PolicyReports pending)
+
+Context. Phase 5 makes compliance a property of the paved road (ADR-0005): a non-compliant claim, or a non-compliant resource a Composition composes, is refused at admission, every policy names the controls it implements, every policy has a CI test proving it denies a violation, and PolicyReports are the evidence. CLAUDE.md said Kyverno ClusterPolicies. Kyverno 1.19, the current release, marks the kyverno.io/v1 ClusterPolicy deprecated in favor of CEL-based types, and its supported Kubernetes range ends at 1.35 while this cluster runs K3s 1.36.
+
+Decision.
+
+- ValidatingPolicy (policies.kyverno.io/v1beta1, the storage version; v1 is served but marked deprecated in this release) instead of ClusterPolicy. It is CEL, the language of Kubernetes ValidatingAdmissionPolicy and of the XRD rules already in this repository, and it keeps annotations, CLI tests, and PolicyReports. CLAUDE.md is updated to match. Kyverno v1.19.1 runs one minor version ahead of its supported Kubernetes range; that is accepted because every policy is proven on this cluster, not assumed to work, and recorded here.
+- Ten policies, each annotated with platform.jordandesigns.io/control. They target what the XRDs cannot see. The XRDs already type sizes, environments, the cost-center shape, and digest-pinned images; the policies add the namespace rule, open cost centers, the ban on choosing a Composition directly, the GitOps-only write path, RBAC in team namespaces, the AWS internal-ingress refusal, and checks on what Compositions compose (public access, encryption at rest, TLS, cost tags), so a Composition bug cannot produce a non-compliant cloud resource either. restrict-pod-security and require-private-cluster-endpoint wait for xcluster.
+- Every policy has a kyverno test suite under policies/tests with at least one resource that must pass and one that must fail: 37 cases, all passing. Neutralizing a policy's check in a scratch copy made its suite fail, so the tests discriminate. A policy-tests job in guardrails.yml runs them on every change with the CLI pinned to v1.19.1 and checked against its release checksum.
+- Kyverno is bootstrap (make kyverno-install, chart 3.9.1): the admission controller and the reports controller only, since no policy uses generate, mutate-existing, or cleanup. The policies are synced by a platform-policies Argo Application without prune, like the XRDs, and the platform AppProject allows ValidatingPolicy, applied by make argocd-root rather than synced.
+
+Leaks and trade-offs found while writing them.
+
+- Cost allocation is spelled three ways: tags.CostCenter on AWS and Azure, labels cost-center on Cloud Run, and settings.userLabels.cost_center on Cloud SQL, because GCP labels allow no capitals and Cloud SQL keeps instance labels under settings. require-cost-allocation-tags carries all three paths.
+- Encryption at rest is a setting only on RDS; Cloud SQL and Flexible Server cannot turn it off, so the rule is AWS-only. TLS on the AWS ALB is Terraform, outside admission.
+- restrict-sizes cannot simply forbid compositionRef, because Crossplane writes the chosen Composition and revision onto the XR itself and Argo's server-side apply then carries them. The policy forbids them on create, allows Crossplane to set them, and on any other update requires them unchanged.
+- require-review-source admits only the Argo application controller and Crossplane, which also blocks the kubectl annotate and apply a person used during earlier live tests. Server dry runs stay allowed, so the pre-merge check still works; break-glass is a PolicyException, itself a reviewed change.
+- deny-internal-webservice-aws first looked up the per-session platform-aws-ingress EnvironmentConfig to see whether the internal ALB exists. The Kyverno CLI cannot mock a custom kind, so that path could never be tested in CI, and a per-session object is absent most of the time. The policy instead encodes the bootstrap default (internal ALB off) as a constant, which fails closed and makes enabling the internal ALB a reviewed change to both the Terraform variable and the policy.
+- One policy had a real bug the tests caught: in least-privilege-connsecret, a subject's namespace written as an escaped CEL field never matched, so a binding to another namespace's service account was admitted. Map indexing fixed it.
+
+Consequences. The control matrix in CLAUDE.md is the policy set, and each row is enforced at admission and proven in CI. Defense in depth: the XRD rejects malformed requests, the policies reject well-formed but non-compliant ones and anything a Composition gets wrong, the Composition fails closed where it cannot honor a field (ADR-0022), and cloud IAM is the last layer. Detective controls (ADR-0005) remain a separate, per-demo slice.
+
+---
+
 ## ADR-0022: The WebService API exposes an image, a port, and reachability, and hides the runtime and the load balancer
 
 Status: Accepted on AWS, GCP, and Azure through the full GitOps path (validated live 2026-10-02; AWS also by direct XR on 2026-10-01)

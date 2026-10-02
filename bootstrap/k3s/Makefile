@@ -221,6 +221,19 @@ argocd-root:
 	$(KCTL) apply -f ../../argocd/projects/
 	$(KCTL) apply -f ../../argocd/app-of-apps.yaml
 
+KYVERNO_CHART_VERSION := 3.9.1
+
+.PHONY: kyverno-install
+
+# Phase 5: Kyverno enforces the ValidatingPolicies in policies/, which Argo
+# syncs through the platform-policies Application. The chart pins Kyverno
+# v1.19.1, the same version as the CLI that tests the policies in CI. Its
+# supported Kubernetes range ends at 1.35 and K3s here is 1.36; the policies
+# are proven live on this cluster rather than assumed to work (ADR-0023).
+kyverno-install:
+	helm repo add kyverno https://kyverno.github.io/kyverno/ --force-update
+	helm upgrade --install kyverno kyverno/kyverno --version $(KYVERNO_CHART_VERSION) --namespace kyverno --create-namespace --kubeconfig $(KUBECONFIG) --kube-context idp-k3s --values kyverno/values.yaml --wait --timeout 10m
+
 BACKSTAGE_CHART_VERSION := 2.10.2
 BACKSTAGE_TOKEN         := $(HOME)/.config/idp-platform/backstage-github-token
 BACKSTAGE_OAUTH_ID      := $(HOME)/.config/idp-platform/github-oauth-client-id

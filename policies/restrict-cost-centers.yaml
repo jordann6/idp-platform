@@ -1,0 +1,27 @@
+# FinOps: a claim may only bill to a cost center finance has opened. The XRD
+# checks the cc-NNNN shape; only this list knows which ones exist, so adding a
+# cost center is a reviewed change to this policy.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-cost-centers
+  annotations:
+    policies.kyverno.io/title: Bill only to open cost centers
+    platform.jordandesigns.io/control: "SOC2 CC3.2; FinOps cost allocation"
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["platform.jordandesigns.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["databases", "webservices"]
+  variables:
+    - name: open
+      expression: "['cc-1001']"
+  validations:
+    - expression: "has(object.spec.costCenter) && object.spec.costCenter in variables.open"
+      messageExpression: "'cost center ' + (has(object.spec.costCenter) ? object.spec.costCenter : '<none>') + ' is not open; open ones: ' + variables.open.join(', ')"

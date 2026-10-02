@@ -1,0 +1,41 @@
+apiVersion: sql.gcp.m.upbound.io/v1beta1
+kind: DatabaseInstance
+metadata:
+  name: good-sql
+  namespace: team-demo
+spec:
+  forProvider:
+    settings:
+      ipConfiguration:
+        sslMode: ENCRYPTED_ONLY
+---
+apiVersion: containerapp.azure.m.upbound.io/v1beta1
+kind: ContainerApp
+metadata:
+  name: good-app
+  namespace: team-demo
+spec:
+  forProvider:
+    ingress:
+      allowInsecureConnections: false
+---
+apiVersion: sql.gcp.m.upbound.io/v1beta1
+kind: DatabaseInstance
+metadata:
+  name: bad-sql
+  namespace: team-demo
+spec:
+  forProvider:
+    settings:
+      ipConfiguration:
+        sslMode: ALLOW_UNENCRYPTED_AND_ENCRYPTED
+---
+apiVersion: containerapp.azure.m.upbound.io/v1beta1
+kind: ContainerApp
+metadata:
+  name: bad-app
+  namespace: team-demo
+spec:
+  forProvider:
+    ingress:
+      allowInsecureConnections: true

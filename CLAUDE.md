@@ -30,7 +30,7 @@ crossplane/
   functions/      function-patch-and-transform, function-go-templating
 backstage/        catalog entities, scaffolder templates, app-config.yaml
 argocd/           app-of-apps.yaml, projects/
-policies/         Kyverno ClusterPolicies
+policies/         Kyverno ValidatingPolicies (ADR-0023), tests/ per policy
 claims/<team>/    claims written by the scaffolder, synced by Argo
 ```
 
@@ -95,7 +95,7 @@ Compliance is a byproduct of the paved road. A developer cannot provision a non-
 
 Control layers:
 
-- Preventive: Kyverno ClusterPolicies deny non-compliant claims at admission. Each policy carries an annotation naming the control it satisfies, so the policy set is the control matrix. Policies also run in CI against rendered claims, not only at admission.
+- Preventive: Kyverno ValidatingPolicies (ADR-0023; ClusterPolicy is deprecated in Kyverno 1.19) deny non-compliant claims and composed resources at admission. Each policy carries an annotation naming the control it satisfies, so the policy set is the control matrix. Policies also run in CI against rendered claims, not only at admission.
 - Change management: GitOps. Every infra change is a reviewed, version-controlled PR synced by Argo. The scaffolder opens a PR, it never pushes to a synced path.
 - Detective: cloud-native drift detection below Crossplane (AWS Config conformance packs, Azure Policy, GCP Security Command Center and Org Policy). Implement a slice for demos and destroy after; do not leave org-wide recording on.
 - Evidence: Kyverno PolicyReports are machine-readable proof that no non-compliant resource was admitted.
@@ -106,15 +106,18 @@ Control mapping. Annotate each Kyverno policy with `platform.jordandesigns.io/co
 
 | Kyverno policy | SOC 2 (Common Criteria) | CIS control | What it enforces |
 |---|---|---|---|
-| require-tags | CC6.1, CC3.2 | CIS 1.1 (asset inventory) | Owner, team, cost-center, environment tags on every claim |
-| deny-public-database | CC6.6, CC6.1 | CIS 5.2 (limit network exposure) | No publicly accessible database; private networking only |
-| require-encryption-at-rest | CC6.7 | CIS 3.11 (encrypt at rest) | Storage encryption on every provisioned resource |
-| require-tls-in-transit | CC6.7 | CIS 3.10 (encrypt in transit) | TLS enforced on database and web-service endpoints |
-| restrict-sizes | CC8.1, CC3.4 | CIS 2.x (config hardening) | Only the small, medium, large t-shirt sizes; no arbitrary SKUs |
-| require-review-source | CC8.1 | CIS 4.x (change control) | Claims must arrive via a synced GitOps path, not manual apply |
-| least-privilege-connsecret | CC6.1, CC6.3 | CIS 1.x (access management) | Connection secrets stay in the claim namespace, RBAC scoped |
-| restrict-pod-security | CC7.1 | CIS EKS 4.2 (pod security) | Pod Security Standards restricted on xcluster workloads: no privileged, no hostPath, drop capabilities, read-only root fs, runAsNonRoot |
-| require-private-cluster-endpoint | CC6.6 | CIS EKS 5.4 (private endpoint) | xcluster API server private or CIDR-restricted, nodes without public IPs |
+| require-tags | CC6.1, CC3.2 | CIS 1.1 (asset inventory) | Owner, cost-center, environment on every claim; claims only in team-* namespaces (Team tag) |
+| restrict-cost-centers | CC3.2 | FinOps | A claim bills only to a cost center finance has opened |
+| require-cost-allocation-tags | CC3.2 | FinOps | Every billable composed resource carries the cost center (FinOps tagging hook) |
+| deny-public-database | CC6.6, CC6.1 | CIS 5.2 (limit network exposure) | Composed RDS, Cloud SQL, and Flexible Server have public access explicitly off |
+| require-encryption-at-rest | CC6.7 | CIS 3.11 (encrypt at rest) | RDS storageEncrypted (GCP and Azure cannot turn it off) |
+| require-tls-in-transit | CC6.7 | CIS 3.10 (encrypt in transit) | Cloud SQL refuses unencrypted connections; container apps refuse plain HTTP |
+| restrict-sizes | CC8.1, CC3.4 | CIS 2.x (config hardening) | Only small, medium, large; no Composition chosen except by the cloud label |
+| require-review-source | CC8.1 | CIS 4.x (change control) | Claims are written only by Argo CD (or Crossplane); server dry runs allowed |
+| least-privilege-connsecret | CC6.1, CC6.3 | CIS 1.x (access management) | RoleBindings in team namespaces bind only that namespace's service accounts, never cluster-admin |
+| deny-internal-webservice-aws | CC6.6 | CIS 5.2 (limit network exposure) | visibility internal on AWS refused while the internal ALB is off (ADR-0022) |
+| restrict-pod-security (deferred with xcluster) | CC7.1 | CIS EKS 4.2 (pod security) | Pod Security Standards restricted on xcluster workloads: no privileged, no hostPath, drop capabilities, read-only root fs, runAsNonRoot |
+| require-private-cluster-endpoint (deferred with xcluster) | CC6.6 | CIS EKS 5.4 (private endpoint) | xcluster API server private or CIDR-restricted, nodes without public IPs |
 
 Done criteria for the compliance phase:
 

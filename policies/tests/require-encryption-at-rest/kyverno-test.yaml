@@ -1,0 +1,21 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: require-encryption-at-rest
+policies:
+- ../../require-encryption-at-rest.yaml
+resources:
+- resources.yaml
+results:
+- isValidatingPolicy: true
+  policy: require-encryption-at-rest
+  kind: Instance
+  resources:
+  - good-rds
+  result: pass
+- isValidatingPolicy: true
+  policy: require-encryption-at-rest
+  kind: Instance
+  resources:
+  - bad-rds
+  result: fail

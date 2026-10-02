@@ -61,6 +61,25 @@ jobs:
       - uses: actions/checkout@v4
       - run: scripts/check-claim-entities.sh
 
+  # Phase 5 (CLAUDE.md compliance): every admission policy has a test that
+  # proves it denies a violating resource and admits a compliant one. One
+  # cheap job, so it runs on every change. The CLI is pinned to the version
+  # running in the cluster and checked against the release checksum.
+  policy-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Kyverno CLI
+        run: |
+          VERSION=1.19.1
+          FILE="kyverno-cli_v${VERSION}_linux_x86_64.tar.gz"
+          curl -sSLO "https://github.com/kyverno/kyverno/releases/download/v${VERSION}/${FILE}"
+          echo "b38228f367fc0fdc2b08f4c83ea50ac5f16c60ff8d62d76a66157c33c47b70ae  ${FILE}" | sha256sum -c -
+          sudo tar -xzf "${FILE}" -C /usr/local/bin kyverno
+          kyverno version
+      - name: Test every policy
+        run: kyverno test policies/tests
+
   # The tf-ci secret scan only runs when a Terraform root changed, so a PR
   # that touches only claims, Compositions, or Backstage still needs one.
   # Same pinned binary and full-history scan as tf-ci.yml.
