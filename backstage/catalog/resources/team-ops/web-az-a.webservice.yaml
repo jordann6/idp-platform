@@ -12,7 +12,7 @@ metadata:
     backstage.io/source-location: url:https://github.com/jordann6/idp-platform/tree/main/claims/team-ops/
     platform.jordandesigns.io/claim: claims/team-ops/web-az-a.webservice.yaml
     platform.jordandesigns.io/cloud: azure
-    platform.jordandesigns.io/visibility: public
+    platform.jordandesigns.io/visibility: internal
     platform.jordandesigns.io/requested-by: guest
   tags:
     - webservice
