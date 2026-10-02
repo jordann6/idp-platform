@@ -124,9 +124,10 @@ rds-readopt:
 	aws rds modify-db-instance --region us-east-1 --cli-input-json file://$$req --query 'DBInstance.PendingModifiedValues' --output json
 
 # Sub-providers installed for the current phase; must match providers.yaml.
-AZURE_SUBPROVIDERS := provider-azure-dbforpostgresql
+AZURE_SUBPROVIDERS := provider-azure-containerapp
+AZURE_APPS_TF      := ../azure/apps
 
-.PHONY: azure-provider azure-verify azure-verify-delete
+.PHONY: azure-provider azure-verify azure-verify-delete azure-apps azure-apps-clean
 
 azure-provider:
 	$(KCTL) apply -f ../../crossplane/providers/azure/runtime-config.yaml
@@ -146,6 +147,17 @@ azure-verify:
 
 azure-verify-delete:
 	$(KCTL) -n idp-verify delete resourcegroup.azure.m.upbound.io/verify --wait
+
+# ADR-0022: the per-session web values (environment, cache registry, runtime
+# identity) for xwebservice-azure, from bootstrap/azure/apps outputs. Run after
+# terraform apply of that module, and azure-apps-clean before destroying it.
+# The cache registry holds everything it pulled, so destroying it leaves
+# nothing behind, unlike the ECR pull-through cache on AWS.
+azure-apps:
+	@env=$$(terraform -chdir=$(AZURE_APPS_TF) output -raw environment_id) && reg=$$(terraform -chdir=$(AZURE_APPS_TF) output -raw cache_registry) && id=$$(terraform -chdir=$(AZURE_APPS_TF) output -raw runtime_identity_id) && test -n "$$env" && test -n "$$reg" && test -n "$$id" && sed -e "s|__ENVIRONMENT_ID__|$$env|" -e "s|__CACHE_REGISTRY__|$$reg|" -e "s|__RUNTIME_IDENTITY_ID__|$$id|" ../../crossplane/providers/azure/platform-azure-apps.yaml | $(KCTL) apply -f -
+
+azure-apps-clean:
+	-$(KCTL) delete environmentconfig platform-azure-apps --ignore-not-found
 
 # Sub-providers installed for the current phase; must match providers.yaml.
 GCP_SUBPROVIDERS := provider-gcp-cloudrun

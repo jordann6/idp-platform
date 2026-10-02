@@ -1,0 +1,15 @@
+# ADR-0022: the per-session Azure web values the xwebservice-azure
+# Composition needs. The environment ID and the runtime identity ID embed the
+# subscription, and the environment and cache registry exist only during a
+# demo session, so none of them belongs in the synced region map. Applied by
+# make azure-apps from bootstrap/azure/apps outputs, never synced by Argo
+# (same pattern as platform-aws-ingress), and deleted by make azure-apps-clean.
+apiVersion: apiextensions.crossplane.io/v1beta1
+kind: EnvironmentConfig
+metadata:
+  name: platform-azure-apps
+data:
+  azureApps:
+    environmentId: __ENVIRONMENT_ID__
+    cacheRegistry: __CACHE_REGISTRY__
+    runtimeIdentityId: __RUNTIME_IDENTITY_ID__

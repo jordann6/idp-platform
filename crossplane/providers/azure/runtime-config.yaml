@@ -40,11 +40,11 @@ spec:
 apiVersion: pkg.crossplane.io/v1beta1
 kind: DeploymentRuntimeConfig
 metadata:
-  name: provider-azure-dbforpostgresql
+  name: provider-azure-containerapp
 spec:
   serviceAccountTemplate:
     metadata:
-      name: provider-azure-dbforpostgresql
+      name: provider-azure-containerapp
   deploymentTemplate:
     spec:
       selector: {}

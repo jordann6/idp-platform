@@ -41,6 +41,11 @@ data:
     vnetName: vnet-idp-platform-us-east
     postgresSubnetName: snet-postgres
     privateDnsZoneName: privatelink.postgres.database.azure.com
+    # Web services (ADR-0022): the standing apps group from
+    # bootstrap/azure/network. The environment, cache registry, and runtime
+    # identity IDs embed the subscription and come from the bootstrap-only
+    # platform-azure-apps EnvironmentConfig.
+    appsResourceGroup: rg-idp-platform-us-east-apps
   # Outputs of bootstrap/gcp/network. The project ID is not here: it lives in
   # the platform-gcp-project EnvironmentConfig that make gcp-adc applies from
   # Terraform outputs, so this synced file carries no GCP account identifier.

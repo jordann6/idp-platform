@@ -13,6 +13,21 @@ output "data_resource_group_id" {
   value       = azurerm_resource_group.data.id
 }
 
+output "apps_resource_group_name" {
+  description = "Resource group for the Container Apps environment and every WebService (ADR-0022)."
+  value       = azurerm_resource_group.apps.name
+}
+
+output "apps_resource_group_id" {
+  description = "Apps resource group ID, the scope of the Crossplane Container Apps role."
+  value       = azurerm_resource_group.apps.id
+}
+
+output "apps_subnet_id" {
+  description = "Subnet delegated to Microsoft.App/environments, the environment's infrastructure subnet."
+  value       = azurerm_subnet.apps.id
+}
+
 output "network_resource_group_name" {
   description = "Resource group holding the shared network."
   value       = azurerm_resource_group.network.name
