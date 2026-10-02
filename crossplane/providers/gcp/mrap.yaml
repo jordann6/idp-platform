@@ -1,6 +1,6 @@
 # Activate only the GCP managed resource types the current phase uses.
-# Phase 4 (xwebservice-gcp): Cloud Run v2 services. Buckets (Phase 0) and the
-# Cloud SQL types (Phase 2) come back when their sub-providers are reinstalled.
+# Cloud SQL (xdatabase-gcp) and Cloud Run v2 services (xwebservice-gcp).
+# Buckets (Phase 0) come back when provider-gcp-storage is reinstalled.
 apiVersion: apiextensions.crossplane.io/v1alpha1
 kind: ManagedResourceActivationPolicy
 metadata:
@@ -8,3 +8,6 @@ metadata:
 spec:
   activate:
     - v2services.cloudrun.gcp.m.upbound.io
+    - databaseinstances.sql.gcp.m.upbound.io
+    - databases.sql.gcp.m.upbound.io
+    - users.sql.gcp.m.upbound.io

@@ -160,7 +160,7 @@ azure-apps-clean:
 	-$(KCTL) delete environmentconfig platform-azure-apps --ignore-not-found
 
 # Sub-providers installed for the current phase; must match providers.yaml.
-GCP_SUBPROVIDERS := provider-gcp-cloudrun
+GCP_SUBPROVIDERS := provider-gcp-cloudrun provider-gcp-sql
 
 .PHONY: gcp-provider gcp-adc gcp-verify gcp-verify-delete
 
