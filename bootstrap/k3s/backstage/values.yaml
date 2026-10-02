@@ -27,6 +27,14 @@ backstage:
     app:
       title: idp-platform
       baseUrl: http://localhost:7007
+      # Plugin discovery for the new frontend system: without it only the
+      # features listed in App.tsx load, so there is no landing page and the
+      # sidebar fails on plugins it expects. The catalog is the landing page.
+      packages: all
+      extensions:
+        - page:catalog:
+            config:
+              path: /
     organization:
       name: idp-platform
     backend:
