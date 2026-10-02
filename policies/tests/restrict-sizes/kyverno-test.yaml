@@ -1,0 +1,24 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-sizes
+policies:
+- ../../restrict-sizes.yaml
+resources:
+- resources.yaml
+results:
+- isValidatingPolicy: true
+  policy: restrict-sizes
+  kind: Database
+  resources:
+  - good-db
+  result: pass
+- isValidatingPolicy: true
+  policy: restrict-sizes
+  kind: Database
+  resources:
+  - bad-size
+  - bad-selector
+  - bad-ref
+  result: fail
+userinfo: userinfo.yaml

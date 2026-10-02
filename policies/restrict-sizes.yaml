@@ -1,0 +1,48 @@
+# Only the paved road's sizes, and only the Composition the cloud label picks.
+# The XRD enumerates the sizes; what it cannot stop is a claim naming a
+# Composition directly (compositionRef or compositionRevisionRef) or selecting
+# by another label, which would bypass the platform's SKU mapping. Crossplane
+# itself records the chosen Composition on the XR, so those fields may change
+# only by Crossplane, and must be absent when a claim is created.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-sizes
+  annotations:
+    policies.kyverno.io/title: Paved-road sizes and Compositions only
+    platform.jordandesigns.io/control: "SOC2 CC8.1, CC3.4; CIS 2.x (configuration hardening)"
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["platform.jordandesigns.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["databases", "webservices"]
+  variables:
+    - name: xp
+      expression: "has(object.spec.crossplane) ? object.spec.crossplane : {}"
+    - name: oldXp
+      expression: "oldObject != null && has(oldObject.spec.crossplane) ? oldObject.spec.crossplane : {}"
+    - name: isCrossplane
+      expression: "request.userInfo.username == 'system:serviceaccount:crossplane-system:crossplane'"
+    - name: selector
+      expression: "has(variables.xp.compositionSelector) && has(variables.xp.compositionSelector.matchLabels) ? variables.xp.compositionSelector.matchLabels : {}"
+  validations:
+    - expression: "!has(object.spec.size) || object.spec.size in ['small', 'medium', 'large']"
+      message: "spec.size must be small, medium, or large."
+    - expression: >-
+        variables.selector.size() == 1 &&
+        'platform.jordandesigns.io/cloud' in variables.selector &&
+        variables.selector['platform.jordandesigns.io/cloud'] in ['aws', 'gcp', 'azure']
+      message: "Select a Composition only by platform.jordandesigns.io/cloud (aws, gcp, or azure)."
+    - expression: >-
+        variables.isCrossplane ||
+        (request.operation == 'CREATE'
+          ? !has(variables.xp.compositionRef) && !has(variables.xp.compositionRevisionRef)
+          : ((has(variables.xp.compositionRef) ? variables.xp.compositionRef : {}) == (has(variables.oldXp.compositionRef) ? variables.oldXp.compositionRef : {})
+            && (has(variables.xp.compositionRevisionRef) ? variables.xp.compositionRevisionRef : {}) == (has(variables.oldXp.compositionRevisionRef) ? variables.oldXp.compositionRevisionRef : {})))
+      message: "A claim may not name a Composition or revision directly; Crossplane selects it from the cloud label."

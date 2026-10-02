@@ -6,7 +6,7 @@ metadata:
   name: platform
   namespace: argocd
 spec:
-  description: Platform APIs, Compositions, Functions, and the app-of-apps.
+  description: Platform APIs, Compositions, Functions, admission policies, and the app-of-apps.
   sourceRepos:
     - git@github.com:jordann6/idp-platform.git
   destinations:
@@ -14,6 +14,8 @@ spec:
       namespace: argocd
     - server: https://kubernetes.default.svc
       namespace: crossplane-system
+    - server: https://kubernetes.default.svc
+      namespace: kyverno
   clusterResourceWhitelist:
     - group: apiextensions.crossplane.io
       kind: CompositeResourceDefinition
@@ -25,6 +27,9 @@ spec:
       kind: Function
     - group: pkg.crossplane.io
       kind: DeploymentRuntimeConfig
+    # Phase 5: the admission policies (ADR-0023).
+    - group: policies.kyverno.io
+      kind: ValidatingPolicy
   namespaceResourceWhitelist:
     - group: argoproj.io
       kind: Application

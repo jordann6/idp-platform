@@ -1,0 +1,51 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: require-cost-allocation-tags
+policies:
+- ../../require-cost-allocation-tags.yaml
+resources:
+- resources.yaml
+results:
+- isValidatingPolicy: true
+  policy: require-cost-allocation-tags
+  kind: Instance
+  resources:
+  - good-rds
+  result: pass
+- isValidatingPolicy: true
+  policy: require-cost-allocation-tags
+  kind: V2Service
+  resources:
+  - good-run
+  result: pass
+- isValidatingPolicy: true
+  policy: require-cost-allocation-tags
+  kind: DatabaseInstance
+  resources:
+  - good-sql
+  result: pass
+- isValidatingPolicy: true
+  policy: require-cost-allocation-tags
+  kind: ContainerApp
+  resources:
+  - good-app
+  result: pass
+- isValidatingPolicy: true
+  policy: require-cost-allocation-tags
+  kind: Instance
+  resources:
+  - bad-rds
+  result: fail
+- isValidatingPolicy: true
+  policy: require-cost-allocation-tags
+  kind: V2Service
+  resources:
+  - bad-run
+  result: fail
+- isValidatingPolicy: true
+  policy: require-cost-allocation-tags
+  kind: ContainerApp
+  resources:
+  - bad-app
+  result: fail
