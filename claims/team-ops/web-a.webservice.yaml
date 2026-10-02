@@ -12,7 +12,7 @@ spec:
     compositionSelector:
       matchLabels:
         platform.jordandesigns.io/cloud: azure
-  image: public.ecr.aws/nginx/nginx-unprivileged@sha256:59678856b05324b7f6371f26eb1520be7fcd8bdc8ab380fc4913db8503e5a842
+  image: public.ecr.aws/l1l7k5g9/idp-platform-apps/team-ops.web-a@sha256:ae1510fddb3ce3a99a1cb46ab816216d09a97f7695a36e906092e4e44c9113e9
   port: 8080
   healthPath: /
   size: small

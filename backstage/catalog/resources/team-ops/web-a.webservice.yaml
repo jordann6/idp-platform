@@ -16,7 +16,7 @@ metadata:
     platform.jordandesigns.io/repository: idp-platform-apps/team-ops.web-a
     platform.jordandesigns.io/team: team-ops
     platform.jordandesigns.io/cloud: azure
-    platform.jordandesigns.io/image: "public.ecr.aws/nginx/nginx-unprivileged@sha256:59678856b05324b7f6371f26eb1520be7fcd8bdc8ab380fc4913db8503e5a842"
+    platform.jordandesigns.io/image: "public.ecr.aws/l1l7k5g9/idp-platform-apps/team-ops.web-a@sha256:ae1510fddb3ce3a99a1cb46ab816216d09a97f7695a36e906092e4e44c9113e9"
     platform.jordandesigns.io/port: "8080"
     platform.jordandesigns.io/health-path: "/"
     platform.jordandesigns.io/size: small
