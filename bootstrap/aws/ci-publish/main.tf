@@ -98,9 +98,12 @@ resource "aws_iam_role" "publish" {
 }
 
 data "aws_iam_policy_document" "publish" {
-  #checkov:skip=CKV_AWS_107:A registry push needs the ECR Public auth token and its STS bearer token; the bearer token is limited to ecr-public.amazonaws.com.
-  # Neither action accepts a resource. The bearer token is limited to the
-  # ECR Public service name.
+  #checkov:skip=CKV_AWS_107:A registry push needs the ECR Public auth token and its STS bearer token; the boundary allows no other service the token could be used for.
+  # Neither action accepts a resource. The bearer token is not narrowed by
+  # sts:AWSServiceName: with a condition on ecr-public.amazonaws.com the
+  # first live publish was refused, because ECR Public's login does not
+  # present that value. A bearer token for another service is useless to
+  # this role, since the boundary allows no other service's actions.
   statement {
     sid       = "AuthToken"
     actions   = ["ecr-public:GetAuthorizationToken"]
@@ -111,12 +114,6 @@ data "aws_iam_policy_document" "publish" {
     sid       = "BearerToken"
     actions   = ["sts:GetServiceBearerToken"]
     resources = ["*"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "sts:AWSServiceName"
-      values   = ["ecr-public.amazonaws.com"]
-    }
   }
 
   # Create on first publish, only under the organization prefix, only with
