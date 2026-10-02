@@ -1,0 +1,16 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: require-review-source-garbage-collector
+policies:
+- ../../../require-review-source.yaml
+resources:
+- resources.yaml
+userinfo: userinfo.yaml
+results:
+- isValidatingPolicy: true
+  policy: require-review-source
+  kind: Database
+  resources:
+  - db-being-deleted
+  result: skip
