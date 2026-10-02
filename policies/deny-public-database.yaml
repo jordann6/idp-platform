@@ -29,6 +29,14 @@ spec:
         apiVersions: ["*"]
         operations: ["CREATE", "UPDATE"]
         resources: ["flexibleservers"]
+  # An update to an object that is already being deleted only removes
+  # finalizers (Crossplane, or the garbage collector finishing a foreground
+  # deletion that Argo started). Enforcing on it would make a deleted resource
+  # undeletable; this was found live when the evidence claim stuck in
+  # foregroundDeletion (ADR-0023).
+  matchConditions:
+    - name: not-being-deleted
+      expression: "!has(object.metadata.deletionTimestamp)"
   variables:
     - name: group
       expression: "object.apiVersion.split('/')[0]"
