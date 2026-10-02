@@ -1,0 +1,2 @@
+# Written by the idp-platform service template from the members of ${{ values.team }}.
+*{% for r in values.relations %}{% if r.type == "hasMember" %} @${{ r.targetRef | parseEntityRef | pick("name") }}{% endif %}{% endfor %}

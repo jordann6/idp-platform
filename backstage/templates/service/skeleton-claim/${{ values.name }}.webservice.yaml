@@ -1,0 +1,24 @@
+# Written by the Backstage service or deploy template. Every value here is
+# also an annotation on the paired catalog entity, because the deploy
+# template re-renders this file from them; scripts/check-claim-entities.sh
+# fails when the two disagree (ADR-0024).
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: WebService
+metadata:
+  name: ${{ values.name }}
+  namespace: ${{ values.namespace }}
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: ${{ values.cloud }}
+  image: ${{ values.image }}
+  port: ${{ values.port }}
+  healthPath: ${{ values.healthPath }}
+  size: ${{ values.size }}
+  visibility: ${{ values.visibility }}
+  maxInstances: ${{ values.maxInstances }}
+  region: us-east
+  owner: ${{ values.owner }}
+  costCenter: ${{ values.costCenter }}
+  environment: ${{ values.environment }}
