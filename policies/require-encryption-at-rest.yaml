@@ -13,10 +13,16 @@ spec:
   evaluation:
     background:
       enabled: true
+  # Composed kinds are named by version, never "*": Kyverno's reports
+  # controller cannot resolve a wildcard version to a kind, so it never
+  # watched these resources and produced no PolicyReport for them, while
+  # admission still enforced (found live, ADR-0023). Equivalent keeps a
+  # request in a future served version matched through conversion.
   matchConstraints:
+    matchPolicy: Equivalent
     resourceRules:
       - apiGroups: ["rds.aws.m.upbound.io"]
-        apiVersions: ["*"]
+        apiVersions: ["v1beta1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["instances"]
   # An update to an object that is already being deleted only removes
