@@ -62,7 +62,7 @@ spec:
           name: ${{ steps.svc.output.entity.metadata.title }}
           namespace: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/team'] }}
           cloud: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/cloud'] }}
-          image: public.ecr.aws/ALIAS_UNSET/${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/repository'] }}@${{ parameters.digest }}
+          image: public.ecr.aws/l1l7k5g9/${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/repository'] }}@${{ parameters.digest }}
           port: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/port'] }}
           healthPath: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/health-path'] }}
           size: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/size'] }}
