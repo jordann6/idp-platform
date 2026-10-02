@@ -2,6 +2,8 @@ VM            := idp-k3s
 KUBECONFIG    := $(HOME)/.kube/idp-k3s.yaml
 KCTL          := kubectl --kubeconfig $(KUBECONFIG) --context idp-k3s
 ISSUER_TF     := ../aws/oidc-issuer
+PUBLISH_TF    := ../aws/ci-publish
+APPS_ORG      := idp-platform-apps
 AUTH_TF       := ../aws/crossplane-auth
 GCP_AUTH_TF   := ../gcp/crossplane-auth
 AZURE_AUTH_TF := ../azure/crossplane-auth
@@ -265,6 +267,14 @@ backstage-github-apps:
 		--from-file=GITHUB_APP_SCAFFOLDER_PRIVATE_KEY=$(GITHUB_APP_DIR)/github-app-scaffolder.pem \
 		--dry-run=client -o yaml | $(KCTL) apply -f -
 	$(KCTL) -n backstage delete secret backstage-github --ignore-not-found
+
+# ADR-0024: hand the publish role ARN to scaffolded repositories as an
+# organization Actions variable, read from Terraform outputs, so the account
+# ID never enters git or any public skeleton. Needs the admin:org gh scope.
+.PHONY: ci-publish
+ci-publish:
+	@arn=$$(terraform -chdir=$(PUBLISH_TF) output -raw role_arn) && test -n "$$arn" && gh variable set IDP_CI_PUBLISH_ROLE_ARN --org $(APPS_ORG) --visibility all --body "$$arn"
+	@gh api orgs/$(APPS_ORG)/actions/variables/IDP_CI_PUBLISH_ROLE_ARN --jq '"\(.name) visibility=\(.visibility) role=\(.value | split("/") | last)"'
 
 # ADR-0019: the GitHub OAuth app's credentials for sign-in, loaded from the
 # Mac. The secret never enters git.
