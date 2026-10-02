@@ -1,0 +1,17 @@
+apiVersion: rds.aws.m.upbound.io/v1beta1
+kind: Instance
+metadata:
+  name: good-rds
+  namespace: team-demo
+spec:
+  forProvider:
+    storageEncrypted: true
+---
+apiVersion: rds.aws.m.upbound.io/v1beta1
+kind: Instance
+metadata:
+  name: bad-rds
+  namespace: team-demo
+spec:
+  forProvider:
+    storageEncrypted: false

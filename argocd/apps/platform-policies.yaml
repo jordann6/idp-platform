@@ -1,0 +1,28 @@
+# Phase 5 admission policies (ADR-0023): the ValidatingPolicies at the top of
+# policies/, not the CLI test fixtures under policies/tests. prune is off for
+# the same reason as platform-apis: removing a control from git should be a
+# deliberate step, not a side effect of a sync. Kyverno itself is bootstrap
+# (make kyverno-install), so a policy commit can never remove the enforcer.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-policies
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: git@github.com:jordann6/idp-platform.git
+    targetRevision: main
+    path: policies
+    directory:
+      recurse: false
+      include: "*.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

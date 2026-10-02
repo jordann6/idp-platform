@@ -1,0 +1,65 @@
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: Database
+metadata:
+  name: good-db
+  namespace: team-demo
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: aws
+  size: small
+  region: us-east
+  owner: jordann6
+  costCenter: cc-1001
+  environment: dev
+---
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: Database
+metadata:
+  name: bad-size
+  namespace: team-demo
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: aws
+  size: xlarge
+  region: us-east
+  owner: jordann6
+  costCenter: cc-1001
+  environment: dev
+---
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: Database
+metadata:
+  name: bad-selector
+  namespace: team-demo
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        tier: custom
+  size: small
+  region: us-east
+  owner: jordann6
+  costCenter: cc-1001
+  environment: dev
+---
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: Database
+metadata:
+  name: bad-ref
+  namespace: team-demo
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: aws
+    compositionRef:
+      name: my-own-composition
+  size: small
+  region: us-east
+  owner: jordann6
+  costCenter: cc-1001
+  environment: dev

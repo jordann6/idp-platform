@@ -1,0 +1,22 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: least-privilege-connsecret
+policies:
+- ../../least-privilege-connsecret.yaml
+resources:
+- resources.yaml
+results:
+- isValidatingPolicy: true
+  policy: least-privilege-connsecret
+  kind: RoleBinding
+  resources:
+  - good-rb
+  result: pass
+- isValidatingPolicy: true
+  policy: least-privilege-connsecret
+  kind: RoleBinding
+  resources:
+  - bad-rb-other-ns
+  - bad-rb-admin
+  result: fail

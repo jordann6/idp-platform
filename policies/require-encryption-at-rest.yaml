@@ -1,0 +1,24 @@
+# Storage encryption on every database. Cloud SQL and Flexible Server encrypt
+# at rest by default with no way to turn it off, so only RDS, where it is a
+# flag, needs a rule.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
+metadata:
+  name: require-encryption-at-rest
+  annotations:
+    policies.kyverno.io/title: Encrypt databases at rest
+    platform.jordandesigns.io/control: "SOC2 CC6.7; CIS 3.11 (encrypt data at rest)"
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["rds.aws.m.upbound.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["instances"]
+  validations:
+    - expression: "has(object.spec.forProvider.storageEncrypted) && object.spec.forProvider.storageEncrypted == true"
+      message: "RDS instances must set storageEncrypted: true."
