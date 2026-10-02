@@ -165,13 +165,56 @@ data "aws_iam_policy_document" "phase1" {
 
   statement {
     sid       = "ManagePlatformDatabases"
-    actions   = ["rds:ModifyDBInstance", "rds:DeleteDBInstance", "rds:RebootDBInstance", "rds:RemoveTagsFromResource"]
+    actions   = ["rds:ModifyDBInstance", "rds:DeleteDBInstance", "rds:RebootDBInstance"]
     resources = [local.db_arn]
 
     condition {
       test     = "StringEquals"
       variable = "aws:ResourceTag/Project"
       values   = ["idp-platform"]
+    }
+  }
+
+  # Tag changes on an instance the platform already owns: an Owner or
+  # Environment edit, or the provider's crossplane-name tag after a control
+  # plane rebuild gives the MR a new name (ADR-0017). AddTagsToResource only
+  # carries the changed tags, so the create-time RequestTag/Project condition
+  # above cannot match it. The Project tag itself can be neither changed to
+  # another value nor removed, so the role cannot release an instance from
+  # its own scope.
+  statement {
+    sid       = "RetagPlatformDatabases"
+    actions   = ["rds:AddTagsToResource"]
+    resources = [local.db_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = ["idp-platform"]
+    }
+
+    condition {
+      test     = "StringEqualsIfExists"
+      variable = "aws:RequestTag/Project"
+      values   = ["idp-platform"]
+    }
+  }
+
+  statement {
+    sid       = "UntagPlatformDatabases"
+    actions   = ["rds:RemoveTagsFromResource"]
+    resources = [local.db_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = ["idp-platform"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringNotEquals"
+      variable = "aws:TagKeys"
+      values   = ["Project"]
     }
   }
 
