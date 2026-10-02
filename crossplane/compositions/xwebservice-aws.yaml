@@ -1,0 +1,343 @@
+# xwebservice on AWS: ECS Fargate behind the shared HTTPS ALB (ADR-0022).
+# Pipeline: load the platform region entry and the per-session ingress values,
+# compose the task definition, target group, host-header listener rule, and
+# ECS service, compose Usages so the target group outlives everything that
+# points at it, patch the URL back to the XR, then mark readiness. The ALB,
+# certificates, DNS, endpoints, cluster, task security group, and execution
+# role are bootstrap (bootstrap/aws/ingress), never per claim.
+#
+# External names (ADR-0017), from provider-upjet-aws v2.8.1
+# config/externalname.go:
+# - Service: TemplatedStringAsIdentifier on name, so it is set explicitly and
+#   a rebuilt control plane re-adopts it automatically.
+# - TaskDefinition, LBTargetGroup, LBListenerRule: IdentifierFromProvider (the
+#   ARN). The family and the target group name are deterministic, so a rebuilt
+#   control plane cannot create a duplicate silently: a second target group
+#   with the same name and settings is returned as the existing one, a second
+#   listener rule fails on the taken priority, and the old task definition
+#   revisions stay registered. Re-adoption is the same lookup as RDS.
+#
+# Provider resource config checked: no generated secrets and no connection
+# details on any of these four resources, so this Composition composes no
+# Secret.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xwebservice-aws
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    platform.jordandesigns.io/cloud: aws
+spec:
+  compositeTypeRef:
+    apiVersion: platform.jordandesigns.io/v1alpha1
+    kind: WebService
+  mode: Pipeline
+  pipeline:
+    - step: load-platform-region
+      functionRef:
+        name: function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Selector
+              selector:
+                mode: Single
+                matchLabels:
+                  - key: platform.jordandesigns.io/region
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.region
+            # Applied by make aws-ingress from Terraform outputs, not from git.
+            - type: Reference
+              ref:
+                name: platform-aws-ingress
+
+    - step: compose-webservice
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $env := index .context "apiextensions.crossplane.io/environment" }}
+            {{- $aws := $env.aws }}
+            {{- $ing := $env.awsIngress }}
+            {{- $ns := $xr.metadata.namespace }}
+            {{- $name := $xr.metadata.name }}
+            {{- $spec := $xr.spec }}
+            {{- $base := printf "idp-%s-%s" $ns $name }}
+            {{- /*
+              ALB target group names cap at 32 characters, under idp-<ns>-<name>,
+              so the readable part is truncated and an 8 character hash keeps it
+              unique and deterministic (the ADR-0021 pattern).
+            */}}
+            {{- $hash := printf "%s/%s" $ns $name | sha256sum | trunc 8 }}
+            {{- $tgName := printf "%s-%s" (printf "idp-%s-%s" $ns $name | trunc 23 | trimSuffix "-") $hash }}
+            {{- /*
+              Listener rule priorities must be unique per listener. A checksum of
+              namespace/name gives a stable priority in 1 to 49999; a collision
+              fails the rule with PriorityInUse instead of shadowing another
+              service, and is recorded as a leak in ADR-0022.
+            */}}
+            {{- $priority := add1 (mod (printf "%s/%s" $ns $name | adler32sum | atoi) 49999) }}
+            {{- $public := eq $spec.visibility "public" }}
+            {{- $listener := ternary $ing.publicListenerArn $ing.internalListenerArn $public }}
+            {{- if not $listener }}
+            {{- fail "visibility internal needs the internal ALB, which is disabled in bootstrap/aws/ingress (internal_alb_enabled)" }}
+            {{- end }}
+            {{- $domain := ternary $aws.webAppsDomain $aws.webInternalDomain $public }}
+            {{- $host := printf "%s.%s.%s" $name $ns $domain }}
+            {{- /*
+              Image supply (ADR-0022). Tasks have no NAT, so images come through
+              the ECR pull-through cache, which only fronts ECR Public without
+              credentials. The XRD accepts any digest-pinned image; on AWS any
+              other registry fails here with a readable message.
+            */}}
+            {{- if not (hasPrefix "public.ecr.aws/" $spec.image) }}
+            {{- fail (printf "on AWS the image must come from public.ecr.aws, got %s (ADR-0022)" $spec.image) }}
+            {{- end }}
+            {{- $image := printf "%s/%s" $ing.ecrCacheRegistry (trimPrefix "public.ecr.aws/" $spec.image) }}
+            {{- $cpu := dict "small" "256" "medium" "512" "large" "1024" }}
+            {{- $mem := dict "small" "512" "medium" "1024" "large" "2048" }}
+            {{- $envList := list }}
+            {{- range $k, $v := (default dict $spec.env) }}
+            {{- $envList = append $envList (dict "name" $k "value" $v) }}
+            {{- end }}
+            {{- $container := dict
+                  "name" "app"
+                  "image" $image
+                  "essential" true
+                  "portMappings" (list (dict "containerPort" (int $spec.port) "protocol" "tcp"))
+                  "environment" $envList
+                  "logConfiguration" (dict
+                    "logDriver" "awslogs"
+                    "options" (dict
+                      "awslogs-group" $aws.webLogGroup
+                      "awslogs-region" $aws.region
+                      "awslogs-stream-prefix" (printf "%s/%s" $ns $name))) }}
+            {{- $tags := dict
+                  "Project" "idp-platform"
+                  "ManagedBy" "crossplane"
+                  "Owner" $spec.owner
+                  "CostCenter" $spec.costCenter
+                  "Environment" $spec.environment
+                  "Team" $ns
+                  "WebService" $name }}
+            ---
+            apiVersion: ecs.aws.m.upbound.io/v1beta1
+            kind: TaskDefinition
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: task-definition
+              labels:
+                platform.jordandesigns.io/component: task-definition
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: aws
+              forProvider:
+                region: {{ $aws.region }}
+                family: {{ $base }}
+                requiresCompatibilities: [FARGATE]
+                networkMode: awsvpc
+                # T-shirt sizes to Fargate CPU units and MiB. Only this file
+                # knows them. ARM64 because Fargate on Graviton costs less and
+                # the paved-road images are multi-architecture.
+                cpu: {{ index $cpu $spec.size | quote }}
+                memory: {{ index $mem $spec.size | quote }}
+                runtimePlatform:
+                  cpuArchitecture: ARM64
+                  operatingSystemFamily: LINUX
+                # The one role the provider may pass (bootstrap/aws/ingress).
+                # No task role: per-service AWS identities are out of scope.
+                executionRoleArn: {{ $ing.executionRoleArn }}
+                containerDefinitions: {{ list $container | toJson | quote }}
+                tags:
+                  {{- toYaml $tags | nindent 18 }}
+            ---
+            apiVersion: elbv2.aws.m.upbound.io/v1beta1
+            kind: LBTargetGroup
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: target-group
+              labels:
+                platform.jordandesigns.io/component: target-group
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: aws
+              forProvider:
+                region: {{ $aws.region }}
+                name: {{ $tgName }}
+                port: {{ $spec.port }}
+                protocol: HTTP
+                protocolVersion: HTTP1
+                targetType: ip
+                vpcId: {{ $aws.vpcId }}
+                deregistrationDelay: "15"
+                healthCheck:
+                  enabled: true
+                  protocol: HTTP
+                  path: {{ $spec.healthPath }}
+                  matcher: "200-399"
+                  interval: 15
+                  timeout: 5
+                  healthyThreshold: 2
+                  unhealthyThreshold: 3
+                tags:
+                  {{- toYaml $tags | nindent 18 }}
+            ---
+            apiVersion: elbv2.aws.m.upbound.io/v1beta1
+            kind: LBListenerRule
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: listener-rule
+              labels:
+                platform.jordandesigns.io/component: listener-rule
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: aws
+              forProvider:
+                region: {{ $aws.region }}
+                listenerArn: {{ $listener }}
+                priority: {{ $priority }}
+                action:
+                  - type: forward
+                    targetGroupArnSelector:
+                      matchControllerRef: true
+                      matchLabels:
+                        platform.jordandesigns.io/component: target-group
+                condition:
+                  - hostHeader:
+                      values:
+                        - {{ $host }}
+                tags:
+                  {{- toYaml $tags | nindent 18 }}
+            {{- /*
+              The ECS Service names its target group by ARN, read here from the
+              observed target group rather than through targetGroupArnSelector.
+              In provider-upjet-aws v2.8.1 that selector crosses from the ecs
+              provider to the elbv2 provider and never resolves ("referenced
+              field was empty") although the target group has its ARN; the
+              elbv2 listener rule resolves the same selector. The Service is
+              therefore composed only once the target group exists (ADR-0022).
+            */}}
+            {{- $tgArn := dig "observed" "resources" "target-group" "resource" "status" "atProvider" "arn" "" $ }}
+            {{- if $tgArn }}
+            ---
+            apiVersion: ecs.aws.m.upbound.io/v1beta1
+            kind: Service
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: service
+                crossplane.io/external-name: {{ $base }}
+              labels:
+                platform.jordandesigns.io/component: service
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: aws
+              forProvider:
+                region: {{ $aws.region }}
+                cluster: {{ $aws.webClusterName }}
+                launchType: FARGATE
+                platformVersion: LATEST
+                # maxInstances is honored as a ceiling only: one task always
+                # runs (Fargate behind an ALB cannot scale to zero), and
+                # autoscaling up to the ceiling needs provider-aws-appautoscaling
+                # and application-autoscaling IAM, deferred (ADR-0022).
+                desiredCount: 1
+                # Each change registers a new task definition revision, so the
+                # reference is re-resolved on every reconcile.
+                taskDefinitionSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    platform.jordandesigns.io/component: task-definition
+                  policy:
+                    resolve: Always
+                networkConfiguration:
+                  subnets:
+                    {{- toYaml $aws.privateSubnetIds | nindent 20 }}
+                  securityGroups:
+                    - {{ $ing.tasksSecurityGroupId }}
+                  assignPublicIp: false
+                loadBalancer:
+                  - containerName: app
+                    containerPort: {{ $spec.port }}
+                    targetGroupArn: {{ $tgArn }}
+                healthCheckGracePeriodSeconds: 30
+                deploymentCircuitBreaker:
+                  enable: true
+                  rollback: true
+                waitForSteadyState: false
+                # Lets deletion proceed without first scaling the service to
+                # zero, so teardown is one delete.
+                forceDelete: true
+                tags:
+                  {{- toYaml $tags | nindent 18 }}
+            {{- end }}
+            ---
+            {{- $ruleReady := dig "observed" "resources" "listener-rule" "resource" "status" "atProvider" "arn" "" $ }}
+            apiVersion: {{ $xr.apiVersion }}
+            kind: {{ $xr.kind }}
+            status:
+              {{- if $ruleReady }}
+              url: {{ printf "https://%s" $host }}
+              {{- end }}
+
+    # A target group cannot be deleted while a listener rule forwards to it or
+    # a service registers targets in it. When the XR is deleted every composed
+    # resource is deleted at once, so Usages hold the target group until both
+    # are gone, and replayDeletion retries it (ADR-0020).
+    - step: compose-usages
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- /* The Service, and so its Usage, exists only once the target group has an ARN. */}}
+            {{- $users := list "listener-rule" }}
+            {{- if dig "observed" "resources" "target-group" "resource" "status" "atProvider" "arn" "" . }}
+            {{- $users = append $users "service" }}
+            {{- end }}
+            {{- range $by := $users }}
+            {{- $kind := ternary "LBListenerRule" "Service" (eq $by "listener-rule") }}
+            {{- $api := ternary "elbv2.aws.m.upbound.io/v1beta1" "ecs.aws.m.upbound.io/v1beta1" (eq $by "listener-rule") }}
+            ---
+            apiVersion: protection.crossplane.io/v1beta1
+            kind: Usage
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ printf "usage-target-group-%s" $by }}
+                gotemplating.fn.crossplane.io/ready: "True"
+            spec:
+              replayDeletion: true
+              reason: {{ printf "A target group must outlive the %s that points at it." $by | quote }}
+              of:
+                apiVersion: elbv2.aws.m.upbound.io/v1beta1
+                kind: LBTargetGroup
+                resourceSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    platform.jordandesigns.io/component: target-group
+              by:
+                apiVersion: {{ $api }}
+                kind: {{ $kind }}
+                resourceSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    platform.jordandesigns.io/component: {{ $by }}
+            {{- end }}
+
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready

@@ -115,3 +115,48 @@ spec:
             - name: gcp-adc
               configMap:
                 name: idp-gcp-adc
+---
+# Phase 4 (xwebservice-gcp). Same wiring as provider-gcp-sql (ADR-0011); its
+# exact subject is in the workload identity pool condition.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-gcp-cloudrun
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-gcp-cloudrun
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              env:
+                - name: GOOGLE_APPLICATION_CREDENTIALS
+                  value: /etc/idp-platform/gcp/credential-config.json
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 768Mi
+              volumeMounts:
+                - name: gcp-federated-token
+                  mountPath: /var/run/secrets/idp-platform/gcp
+                  readOnly: true
+                - name: gcp-adc
+                  mountPath: /etc/idp-platform/gcp
+                  readOnly: true
+          volumes:
+            - name: gcp-federated-token
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: idp-platform-gcp-wif
+                      expirationSeconds: 3600
+                      path: token
+            - name: gcp-adc
+              configMap:
+                name: idp-gcp-adc

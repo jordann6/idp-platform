@@ -1,0 +1,167 @@
+# xwebservice on GCP: Cloud Run (ADR-0022). Pipeline: load the platform region
+# entry and the project ID, compose one Cloud Run v2 service and patch its URL
+# back to the XR, then mark readiness. There is no load balancer, certificate,
+# or DNS: Cloud Run serves every service at an HTTPS run.app URL, so GCP needs
+# none of the per-session ingress AWS does. The image cache and the runtime
+# identity are bootstrap (bootstrap/gcp/web).
+#
+# External names (ADR-0017), from provider-upjet-gcp v3.0.0
+# config/externalname.go: V2Service is TemplatedStringAsIdentifier on name, so
+# the name is set explicitly and a rebuilt control plane re-adopts the service
+# automatically.
+#
+# Provider resource config checked: V2Service has no generated secrets and no
+# connection details, so this Composition composes no Secret.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xwebservice-gcp
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    platform.jordandesigns.io/cloud: gcp
+spec:
+  compositeTypeRef:
+    apiVersion: platform.jordandesigns.io/v1alpha1
+    kind: WebService
+  mode: Pipeline
+  pipeline:
+    - step: load-platform-region
+      functionRef:
+        name: function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Selector
+              selector:
+                mode: Single
+                matchLabels:
+                  - key: platform.jordandesigns.io/region
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.region
+            # Applied by make gcp-adc from Terraform outputs, not from git.
+            - type: Reference
+              ref:
+                name: platform-gcp-project
+
+    - step: compose-webservice
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $env := index .context "apiextensions.crossplane.io/environment" }}
+            {{- $gcp := $env.gcp }}
+            {{- $project := $env.gcpProject.id }}
+            {{- $ns := $xr.metadata.namespace }}
+            {{- $name := $xr.metadata.name }}
+            {{- $spec := $xr.spec }}
+            {{- /*
+              Cloud Run service names stay under 50 characters. idp-<ns>-<name>
+              is kept whole when it fits, otherwise truncated to 40 plus an 8
+              character hash, deterministic either way (the ADR-0021 pattern).
+              The IAM condition only allows the idp- prefix.
+            */}}
+            {{- $base := printf "idp-%s-%s" $ns $name }}
+            {{- $service := $base }}
+            {{- if gt (len $base) 49 }}
+            {{- $service = printf "%s-%s" ($base | trunc 40 | trimSuffix "-") (printf "%s/%s" $ns $name | sha256sum | trunc 8) }}
+            {{- end }}
+            {{- /*
+              Image supply (ADR-0022). Cloud Run pulls only from Artifact
+              Registry, Container Registry, and Docker Hub, so public.ecr.aws
+              images come through the Artifact Registry remote repository that
+              fronts it, keeping one image reference valid on AWS and GCP.
+            */}}
+            {{- if not (hasPrefix "public.ecr.aws/" $spec.image) }}
+            {{- fail (printf "on GCP the image must come from public.ecr.aws, got %s (ADR-0022)" $spec.image) }}
+            {{- end }}
+            {{- $image := printf "%s-docker.pkg.dev/%s/%s/%s" $gcp.region $project $gcp.webCacheRepository (trimPrefix "public.ecr.aws/" $spec.image) }}
+            {{- $public := eq $spec.visibility "public" }}
+            {{- $cpu := dict "small" "1" "medium" "1" "large" "2" }}
+            {{- $mem := dict "small" "512Mi" "medium" "1Gi" "large" "2Gi" }}
+            ---
+            apiVersion: cloudrun.gcp.m.upbound.io/v1beta1
+            kind: V2Service
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: service
+                crossplane.io/external-name: {{ $service }}
+              labels:
+                platform.jordandesigns.io/component: service
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: gcp
+              forProvider:
+                location: {{ $gcp.region }}
+                # ADR-0004: nothing survives deletion.
+                deletionProtection: false
+                # visibility internal: only the platform network (and other
+                # Google internal sources in this project) can reach it.
+                ingress: {{ ternary "INGRESS_TRAFFIC_ALL" "INGRESS_TRAFFIC_INTERNAL_ONLY" $public }}
+                # No invoker IAM check, so reachability is decided by ingress
+                # alone, as it is by the ALB on AWS; a public service needs no
+                # allUsers binding.
+                invokerIamDisabled: true
+                labels:
+                  project: idp-platform
+                  managed-by: crossplane
+                  owner: {{ $spec.owner }}
+                  cost-center: {{ $spec.costCenter }}
+                  environment: {{ $spec.environment }}
+                  team: {{ $ns }}
+                  webservice: {{ $name }}
+                template:
+                  # The role-less runtime identity from bootstrap/gcp/web, never
+                  # the default compute service account.
+                  serviceAccount: {{ printf "%s@%s.iam.gserviceaccount.com" $gcp.webRuntimeServiceAccountId $project }}
+                  maxInstanceRequestConcurrency: 80
+                  # Scales to zero between requests; maxInstances is the
+                  # ceiling (ADR-0022).
+                  scaling:
+                    minInstanceCount: 0
+                    maxInstanceCount: {{ $spec.maxInstances }}
+                  containers:
+                    - name: app
+                      image: {{ $image }}
+                      ports:
+                        - containerPort: {{ $spec.port }}
+                      {{- with $spec.env }}
+                      env:
+                        {{- range $k, $v := . }}
+                        - name: {{ $k }}
+                          value: {{ $v | quote }}
+                        {{- end }}
+                      {{- end }}
+                      # T-shirt sizes to Cloud Run CPU and memory. Only this
+                      # file knows them. CPU is billed only while serving.
+                      resources:
+                        cpuIdle: true
+                        limits:
+                          cpu: {{ index $cpu $spec.size | quote }}
+                          memory: {{ index $mem $spec.size }}
+                      startupProbe:
+                        httpGet:
+                          path: {{ $spec.healthPath }}
+                          port: {{ $spec.port }}
+                        periodSeconds: 5
+                        failureThreshold: 12
+            ---
+            {{- $uri := dig "observed" "resources" "service" "resource" "status" "atProvider" "uri" "" $ }}
+            apiVersion: {{ $xr.apiVersion }}
+            kind: {{ $xr.kind }}
+            status:
+              {{- if $uri }}
+              url: {{ $uri }}
+              {{- end }}
+
+    - step: detect-ready
+      functionRef:
+        name: function-auto-ready

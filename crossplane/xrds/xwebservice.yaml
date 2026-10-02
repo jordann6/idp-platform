@@ -1,0 +1,147 @@
+# xwebservice: the cloud-agnostic WebService API (ADR-0022, ADR-0009,
+# ADR-0003, ADR-0012). A developer supplies a container image pinned by
+# digest, the port it listens on, a size, a platform region, and whether the
+# service is reachable from the internet or only from the platform network.
+# Runtimes, load balancers, target groups, subnets, IAM roles, registries, and
+# CPU or memory figures never appear here; each Composition maps these fields
+# to its own cloud. The cloud is chosen by the compositionSelector label.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: webservices.platform.jordandesigns.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    # Deleting the XRD deletes every WebService and its cloud resources, so
+    # Argo never deletes it, even when its Application is deleted with cascade.
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+spec:
+  group: platform.jordandesigns.io
+  scope: Namespaced
+  names:
+    kind: WebService
+    plural: webservices
+    categories:
+      - platform
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      additionalPrinterColumns:
+        - name: SIZE
+          type: string
+          jsonPath: .spec.size
+        - name: VISIBILITY
+          type: string
+          jsonPath: .spec.visibility
+        - name: URL
+          type: string
+          jsonPath: .status.url
+      schema:
+        openAPIV3Schema:
+          type: object
+          # Same rule as Database (ADR-0015). Two clouds cap the composed names
+          # at 32 characters (ALB target groups, Container Apps), so those
+          # Compositions add a hash rather than this rule getting stricter.
+          x-kubernetes-validations:
+            - rule: "self.metadata.name.matches('^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$') && !self.metadata.name.contains('--')"
+              message: name must be 1 to 30 lowercase letters, digits, or single hyphens, starting with a letter.
+          properties:
+            spec:
+              type: object
+              required:
+                - image
+                - owner
+                - costCenter
+              properties:
+                image:
+                  description: >-
+                    Container image as a fully qualified reference pinned by
+                    digest (registry/repository@sha256:...). Tags are rejected
+                    because a tag can move after review, so the image that runs
+                    would not be the one that was approved.
+                  type: string
+                  maxLength: 255
+                  pattern: "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$"
+                port:
+                  description: >-
+                    Port the container listens on for HTTP. At least 1024,
+                    because the container runs without root and cannot bind
+                    a privileged port.
+                  type: integer
+                  minimum: 1024
+                  maximum: 65535
+                  default: 8080
+                healthPath:
+                  description: HTTP path that answers 200 when the service is healthy. Used for load balancer and startup checks.
+                  type: string
+                  maxLength: 128
+                  pattern: "^/[A-Za-z0-9._~/-]*$"
+                  default: /
+                size:
+                  description: T-shirt size. Each Composition maps it to its runtime's CPU and memory.
+                  type: string
+                  enum: [small, medium, large]
+                  default: small
+                maxInstances:
+                  description: >-
+                    Upper bound on running instances. The lower bound is not
+                    exposed: it is zero where the runtime scales to zero and
+                    one where it cannot (ADR-0022), so the first request after
+                    an idle period may be slower on some clouds.
+                  type: integer
+                  minimum: 1
+                  maximum: 3
+                  default: 1
+                visibility:
+                  description: >-
+                    internal is reachable only from the platform network;
+                    public is reachable from the internet over HTTPS. Private
+                    by default (ADR-0008).
+                  type: string
+                  enum: [internal, public]
+                  default: internal
+                env:
+                  description: >-
+                    Plain environment variables. Not for secrets: values are
+                    visible in the cloud console and in git. PORT and names
+                    starting with K_ are reserved by at least one runtime.
+                  type: object
+                  maxProperties: 20
+                  additionalProperties:
+                    type: string
+                    maxLength: 1024
+                  x-kubernetes-validations:
+                    - rule: "self.all(k, k.matches('^[A-Z_][A-Z0-9_]{0,63}$') && k != 'PORT' && !k.startsWith('K_'))"
+                      message: env names must be uppercase letters, digits, or underscores, not PORT and not starting with K_.
+                region:
+                  description: Platform region, translated to a cloud region by the platform-regions EnvironmentConfig. Fixed at creation.
+                  type: string
+                  enum: [us-east]
+                  default: us-east
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: region is immutable; create a new WebService to move regions.
+                environment:
+                  description: Lifecycle stage, carried to cloud tags.
+                  type: string
+                  enum: [dev, staging, prod]
+                  default: dev
+                owner:
+                  description: Accountable person or group, carried to cloud tags.
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                  pattern: "^[a-z0-9][a-z0-9-]*$"
+                costCenter:
+                  description: Chargeback code, carried to the CostCenter cloud tag.
+                  type: string
+                  pattern: "^cc-[0-9]{4}$"
+            status:
+              type: object
+              properties:
+                url:
+                  description: >-
+                    HTTPS URL clients call, whichever cloud produced it. For
+                    an internal service it resolves only inside the platform
+                    network.
+                  type: string

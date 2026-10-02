@@ -165,3 +165,52 @@ resource "google_org_policy_policy" "sql_restrict_public_ip" {
     }
   }
 }
+
+# Phase 4: Cloud Run services for xwebservice-gcp (ADR-0022), on the idp- name
+# prefix in the platform region only, the same scope as Cloud SQL instances.
+# setIamPolicy is included because invokerIamDisabled, which makes a public
+# service reachable without an allUsers binding, is authorized as an IAM
+# policy change. Acting as the runtime service account is granted on that one
+# account in bootstrap/gcp/web, not at project level.
+resource "google_project_iam_custom_role" "cloudrun_services" {
+  role_id     = "idpCrossplaneCloudRunServices"
+  title       = "idp-platform Crossplane Cloud Run services"
+  description = "Cloud Run service lifecycle for xwebservice-gcp."
+  permissions = [
+    "run.services.create",
+    "run.services.delete",
+    "run.services.get",
+    "run.services.getIamPolicy",
+    "run.services.setIamPolicy",
+    "run.services.update",
+  ]
+}
+
+resource "google_project_iam_member" "cloudrun_services" {
+  project = local.project_id
+  role    = google_project_iam_custom_role.cloudrun_services.id
+  member  = google_service_account.provider.member
+
+  condition {
+    title       = "idp-service-prefix"
+    description = "Only Cloud Run services in the platform region named with the idp- prefix."
+    expression  = "resource.name.startsWith(\"projects/${local.project_id}/locations/${var.web_region}/services/${var.web_name_prefix}\")"
+  }
+}
+
+# Long-running operation polling. Operation names never match the service
+# prefix, so a condition would deny every poll; read only (ADR-0020 pattern).
+resource "google_project_iam_custom_role" "cloudrun_operations" {
+  role_id     = "idpCrossplaneCloudRunOperations"
+  title       = "idp-platform Crossplane Cloud Run operations"
+  description = "Read Cloud Run long-running operations for xwebservice-gcp."
+  permissions = [
+    "run.operations.get",
+  ]
+}
+
+resource "google_project_iam_member" "cloudrun_operations" {
+  project = local.project_id
+  role    = google_project_iam_custom_role.cloudrun_operations.id
+  member  = google_service_account.provider.member
+}

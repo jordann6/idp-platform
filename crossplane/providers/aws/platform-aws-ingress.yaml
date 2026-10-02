@@ -1,0 +1,18 @@
+# ADR-0022: the per-session AWS web ingress values the xwebservice-aws
+# Composition needs. The ARNs and the cache registry embed the account ID,
+# and the task security group is recreated every demo session, so none of
+# them belongs in the synced region map. Applied by make aws-ingress from
+# bootstrap/aws/ingress outputs, never synced by Argo (same pattern as
+# platform-gcp-project, ADR-0003), and deleted by make aws-ingress-clean.
+# internalListenerArn is empty while the internal ALB is disabled.
+apiVersion: apiextensions.crossplane.io/v1beta1
+kind: EnvironmentConfig
+metadata:
+  name: platform-aws-ingress
+data:
+  awsIngress:
+    publicListenerArn: __PUBLIC_LISTENER_ARN__
+    internalListenerArn: "__INTERNAL_LISTENER_ARN__"
+    executionRoleArn: __EXECUTION_ROLE_ARN__
+    ecrCacheRegistry: __ECR_CACHE_REGISTRY__
+    tasksSecurityGroupId: __TASKS_SECURITY_GROUP_ID__

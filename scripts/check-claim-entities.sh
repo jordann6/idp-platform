@@ -1,9 +1,11 @@
 #!/bin/sh
-# Every Database claim under claims/<team>/ must have a catalog Resource entity
-# under backstage/catalog/resources/<team>/ with the same file name, and the
-# reverse. The Database template writes both in one pull request; this check
-# stops a teardown that removes only one of them. Directories starting with an
-# underscore hold platform entities and are skipped.
+# Every claim under claims/<team>/ must have a catalog entity under
+# backstage/catalog/resources/<team>/ with the same file name, and the
+# reverse. Each template writes both in one pull request; this check stops a
+# teardown that removes only one of them. Files are <name>.yaml for a Database
+# and <name>.webservice.yaml for a WebService; XR names cannot contain dots,
+# so the two never collide. Directories starting with an underscore hold
+# platform entities and are skipped.
 set -eu
 
 status=0

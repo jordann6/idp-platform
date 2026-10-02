@@ -12,6 +12,7 @@ aws_oidc_issuer=bootstrap/aws/oidc-issuer
 aws_crossplane_auth=bootstrap/aws/crossplane-auth
 aws_budget=bootstrap/aws/budget
 aws_network=bootstrap/aws/network
+aws_ingress=bootstrap/aws/ingress
 azure_crossplane_auth=bootstrap/azure/crossplane-auth
 azure_budget=bootstrap/azure/budget
 azure_network=bootstrap/azure/network
@@ -19,6 +20,7 @@ gcp_project=bootstrap/gcp/project
 gcp_crossplane_auth=bootstrap/gcp/crossplane-auth
 gcp_budget=bootstrap/gcp/budget
 gcp_network=bootstrap/gcp/network
+gcp_web=bootstrap/gcp/web
 "
 
 zero=0000000000000000000000000000000000000000
