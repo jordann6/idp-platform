@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # Credential-free by design. Everything below runs static analysis over
 # Terraform that, on a pull_request event, was authored by whoever opened the
@@ -17,6 +18,38 @@ permissions:
   contents: read
 
 jobs:
+  # Each Terraform root costs six jobs, so running all of them on every PR
+  # burned private-repo minutes on changes that touched one directory or none.
+  # This job decides which roots changed. Everything runs on a manual dispatch,
+  # on a push with no previous commit to diff against, and when the CI
+  # definition itself changes. A skipped job reports as skipped, not as a
+  # pass, so the merge gate must accept only pass or skipping and never a
+  # missing check.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      aws_oidc_issuer: ${{ steps.diff.outputs.aws_oidc_issuer }}
+      aws_crossplane_auth: ${{ steps.diff.outputs.aws_crossplane_auth }}
+      aws_budget: ${{ steps.diff.outputs.aws_budget }}
+      aws_network: ${{ steps.diff.outputs.aws_network }}
+      azure_crossplane_auth: ${{ steps.diff.outputs.azure_crossplane_auth }}
+      azure_budget: ${{ steps.diff.outputs.azure_budget }}
+      azure_network: ${{ steps.diff.outputs.azure_network }}
+      gcp_project: ${{ steps.diff.outputs.gcp_project }}
+      gcp_crossplane_auth: ${{ steps.diff.outputs.gcp_crossplane_auth }}
+      gcp_budget: ${{ steps.diff.outputs.gcp_budget }}
+      gcp_network: ${{ steps.diff.outputs.gcp_network }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: scripts/ci-changed-roots.sh >> "$GITHUB_OUTPUT"
+
   # Same check as the claim-entities-paired pre-commit hook, because local
   # hooks can be skipped with --no-verify.
   claim-entities:
@@ -25,7 +58,27 @@ jobs:
       - uses: actions/checkout@v4
       - run: scripts/check-claim-entities.sh
 
+  # The tf-ci secret scan only runs when a Terraform root changed, so a PR
+  # that touches only claims, Compositions, or Backstage still needs one.
+  # Same pinned binary and full-history scan as tf-ci.yml.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          VERSION=8.24.3
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Scan full history
+        run: gitleaks detect --source . --redact --no-banner --exit-code 1
+
   static:
+    needs: changes
+    if: needs.changes.outputs.aws_oidc_issuer == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/aws/oidc-issuer
@@ -33,58 +86,79 @@ jobs:
       # checkov_baseline: .checkov.baseline
 
   static-crossplane-auth:
+    needs: changes
+    if: needs.changes.outputs.aws_crossplane_auth == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/aws/crossplane-auth
 
   static-aws-budget:
+    needs: changes
+    if: needs.changes.outputs.aws_budget == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/aws/budget
 
   static-aws-network:
+    needs: changes
+    if: needs.changes.outputs.aws_network == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/aws/network
 
   static-azure-auth:
+    needs: changes
+    if: needs.changes.outputs.azure_crossplane_auth == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/azure/crossplane-auth
 
   static-azure-budget:
+    needs: changes
+    if: needs.changes.outputs.azure_budget == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/azure/budget
 
   static-azure-network:
+    needs: changes
+    if: needs.changes.outputs.azure_network == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/azure/network
 
   static-gcp-project:
+    needs: changes
+    if: needs.changes.outputs.gcp_project == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/gcp/project
 
   static-gcp-auth:
+    needs: changes
+    if: needs.changes.outputs.gcp_crossplane_auth == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/gcp/crossplane-auth
 
   static-gcp-budget:
+    needs: changes
+    if: needs.changes.outputs.gcp_budget == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/gcp/budget
 
   static-gcp-network:
+    needs: changes
+    if: needs.changes.outputs.gcp_network == 'true'
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/gcp/network
 
-  # The FinOps allocation policy (finops.rego) already runs inside `static`
-  # above, because tf-ci.yml evaluates the whole shared policy/ directory. So
-  # the CostCenter tag gate needs no wiring: it is on the moment this file is.
+  # The FinOps allocation policy (finops.rego) already runs inside every
+  # static job above, because tf-ci.yml evaluates the whole shared policy/
+  # directory. So the CostCenter tag gate needs no wiring: it is on for every
+  # Terraform root a change touches.
   #
   # The one FinOps piece that is NOT credential-free is the cost *threshold*.
   # It needs the INFRACOST_API_KEY secret (free tier is fine), so it stays
