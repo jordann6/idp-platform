@@ -44,15 +44,3 @@ variable "verify_bucket_prefix" {
   type        = string
   default     = "idp-verify-"
 }
-
-variable "web_region" {
-  description = "Cloud region the xwebservice-gcp Composition deploys Cloud Run services to. The Phase 4 IAM condition is scoped to it."
-  type        = string
-  default     = "us-east1"
-}
-
-variable "web_name_prefix" {
-  description = "Cloud Run service name prefix the xwebservice-gcp Composition uses. The Phase 4 policy grants service lifecycle on this prefix only."
-  type        = string
-  default     = "idp-"
-}
