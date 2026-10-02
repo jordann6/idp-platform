@@ -12,6 +12,10 @@
 #
 # Provider resource config checked: V2Service has no generated secrets and no
 # connection details, so this Composition composes no Secret.
+#
+# crossplane render does not validate composed resources against the provider
+# CRD, so a V2Service built from this template is also server dry-run against
+# the live CRD before a change merges (ADR-0022).
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
@@ -131,8 +135,10 @@ spec:
                   containers:
                     - name: app
                       image: {{ $image }}
+                      # A Cloud Run container exposes exactly one port, so the
+                      # provider models ports as an object, not a list.
                       ports:
-                        - containerPort: {{ $spec.port }}
+                        containerPort: {{ $spec.port }}
                       {{- with $spec.env }}
                       env:
                         {{- range $k, $v := . }}

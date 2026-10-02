@@ -59,6 +59,8 @@ Live proof, 2026-10-01. With bootstrap/aws/ingress applied (34 resources), team-
 
 How the direct test ran ahead of the merge. Argo tracks main and the region map is synced, so the branch's map entries would have been healed away. Auto-sync was paused on root and platform-apis for the test, the branch's map, XRD, and Composition were applied by hand, and afterwards app-of-apps.yaml was reapplied and main's map reasserted; the extra keys had to be removed explicitly, because Argo's server-side diff compares only the fields Argo owns and reported Synced while they were still there. The GitOps leg waits for the merge, which waits for CI.
 
+GCP, a provider schema leak found on the first GitOps run, 2026-10-02. The Backstage template opened PR #26 for team-data/web-gcp-a, it merged on an all-pass, and Argo created the XR within seconds, which then stayed Synced=False with "containers[0].ports: expected map". A Cloud Run container exposes exactly one port, so provider-upjet-gcp v3.0.0 models ports as an object, while the Composition wrote a list as the Kubernetes container spec does. Nothing reached GCP: the apply of the composed resource is what failed. The offline render had passed, because crossplane render runs the functions but never validates their output against the provider CRDs. The XRD already exposes a single port, so the API is unaffected and the fix is in the Composition. The procedure gains a step: before a Composition change merges, a managed resource built from its template is server dry-run against the live CRD with strict field validation, which rejects both a wrong type and an unknown field (both were confirmed to fail).
+
 ---
 
 ## ADR-0021: Postgres Flexible Server leaks into the Database contract, and Azure RBAC cannot scope by name
