@@ -3,8 +3,8 @@
 # (ADR-0019). The image is the platform's own build of backstage/app, imported
 # into K3s by make backstage-image rather than pulled, so nothing needs a
 # registry credential; the tag is the commit it was built from. The GitHub
-# token and the OAuth app credentials come from Secrets loaded by
-# make backstage-token and make backstage-oauth and are never committed.
+# App credentials and the OAuth app credentials come from Secrets loaded by
+# make backstage-github-apps and make backstage-oauth and are never committed.
 backstage:
   image:
     registry: docker.io
@@ -12,7 +12,7 @@ backstage:
     tag: "__BACKSTAGE_IMAGE_TAG__"
     pullPolicy: Never
   extraEnvVarsSecrets:
-    - backstage-github
+    - backstage-github-apps
     - backstage-github-oauth
   resources:
     requests:
@@ -64,10 +64,27 @@ backstage:
             signIn:
               resolvers:
                 - resolver: usernameMatchingUserEntityName
+    # Two GitHub Apps, no token (ADR-0024). Backstage picks the App whose
+    # installation owns the repository: gitops for jordann6/idp-platform
+    # (claim pull requests, catalog, template skeletons), scaffolder for
+    # repositories it creates in idp-platform-apps. A token here would be a
+    # silent fallback when no App matches, so there is none.
     integrations:
       github:
         - host: github.com
-          token: ${GITHUB_TOKEN}
+          apps:
+            - appId: ${GITHUB_APP_GITOPS_ID}
+              clientId: ${GITHUB_APP_GITOPS_CLIENT_ID}
+              clientSecret: ${GITHUB_APP_GITOPS_CLIENT_SECRET}
+              privateKey: ${GITHUB_APP_GITOPS_PRIVATE_KEY}
+              allowedInstallationOwners:
+                - jordann6
+            - appId: ${GITHUB_APP_SCAFFOLDER_ID}
+              clientId: ${GITHUB_APP_SCAFFOLDER_CLIENT_ID}
+              clientSecret: ${GITHUB_APP_SCAFFOLDER_CLIENT_SECRET}
+              privateKey: ${GITHUB_APP_SCAFFOLDER_PRIVATE_KEY}
+              allowedInstallationOwners:
+                - idp-platform-apps
     catalog:
       # A Database's entity file is deleted in the same pull request as its
       # claim, so an entity whose file is gone describes nothing and is
