@@ -87,9 +87,18 @@ spec:
             {{- $priority := add1 (mod (printf "%s/%s" $ns $name | adler32sum | atoi) 49999) }}
             {{- $public := eq $spec.visibility "public" }}
             {{- $listener := ternary $ing.publicListenerArn $ing.internalListenerArn $public }}
-            {{- if not $listener }}
-            {{- fail "visibility internal needs the internal ALB, which is disabled in bootstrap/aws/ingress (internal_alb_enabled)" }}
-            {{- end }}
+            {{- /*
+              Fail closed (ADR-0022). Visibility internal with the internal ALB
+              disabled cannot be honored. A fatal result here would stop the
+              pipeline, and Crossplane would keep the previously composed
+              resources, so a service changed from public to internal would stay
+              reachable from the internet while reporting Ready. Instead the
+              listener rule and the ECS service are left out of the desired
+              state, which deletes any route and any running task, the target
+              group is marked not ready so the XR is not Ready, and an
+              IngressReady condition carries the reason.
+            */}}
+            {{- $refused := not $listener }}
             {{- $domain := ternary $aws.webAppsDomain $aws.webInternalDomain $public }}
             {{- $host := printf "%s.%s.%s" $name $ns $domain }}
             {{- /*
@@ -165,6 +174,9 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: target-group
+                {{- if $refused }}
+                gotemplating.fn.crossplane.io/ready: "False"
+                {{- end }}
               labels:
                 platform.jordandesigns.io/component: target-group
             spec:
@@ -191,6 +203,7 @@ spec:
                   unhealthyThreshold: 3
                 tags:
                   {{- toYaml $tags | nindent 18 }}
+            {{- if not $refused }}
             ---
             apiVersion: elbv2.aws.m.upbound.io/v1beta1
             kind: LBListenerRule
@@ -219,6 +232,7 @@ spec:
                         - {{ $host }}
                 tags:
                   {{- toYaml $tags | nindent 18 }}
+            {{- end }}
             {{- /*
               The ECS Service names its target group by ARN, read here from the
               observed target group rather than through targetGroupArnSelector.
@@ -229,7 +243,7 @@ spec:
               therefore composed only once the target group exists (ADR-0022).
             */}}
             {{- $tgArn := dig "observed" "resources" "target-group" "resource" "status" "atProvider" "arn" "" $ }}
-            {{- if $tgArn }}
+            {{- if and $tgArn (not $refused) }}
             ---
             apiVersion: ecs.aws.m.upbound.io/v1beta1
             kind: Service
@@ -287,8 +301,25 @@ spec:
             apiVersion: {{ $xr.apiVersion }}
             kind: {{ $xr.kind }}
             status:
-              {{- if $ruleReady }}
+              {{- if and $ruleReady (not $refused) }}
               url: {{ printf "https://%s" $host }}
+              {{- end }}
+            ---
+            apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+            kind: ClaimConditions
+            conditions:
+              {{- if $refused }}
+              - type: IngressReady
+                status: "False"
+                reason: InternalIngressDisabled
+                message: "visibility internal needs the internal ALB, which is disabled in bootstrap/aws/ingress (internal_alb_enabled); the service is not routed and not running until visibility is public or the internal ALB is enabled"
+                target: CompositeAndClaim
+              {{- else }}
+              - type: IngressReady
+                status: "True"
+                reason: Routed
+                message: {{ printf "routed by host %s" $host | quote }}
+                target: CompositeAndClaim
               {{- end }}
 
     # A target group cannot be deleted while a listener rule forwards to it or
@@ -305,9 +336,16 @@ spec:
         inline:
           template: |
             {{- /* The Service, and so its Usage, exists only once the target group has an ARN. */}}
-            {{- $users := list "listener-rule" }}
+            {{- /* No listener rule or service is composed while ingress is refused (fail closed, step above). */}}
+            {{- $ing := (index .context "apiextensions.crossplane.io/environment").awsIngress }}
+            {{- $public := eq .observed.composite.resource.spec.visibility "public" }}
+            {{- $refused := not (ternary $ing.publicListenerArn $ing.internalListenerArn $public) }}
+            {{- $users := list }}
+            {{- if not $refused }}
+            {{- $users = append $users "listener-rule" }}
             {{- if dig "observed" "resources" "target-group" "resource" "status" "atProvider" "arn" "" . }}
             {{- $users = append $users "service" }}
+            {{- end }}
             {{- end }}
             {{- range $by := $users }}
             {{- $kind := ternary "LBListenerRule" "Service" (eq $by "listener-rule") }}
