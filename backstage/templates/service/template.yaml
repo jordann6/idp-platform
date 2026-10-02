@@ -1,0 +1,205 @@
+# Paved-road service (ADR-0024): a repository with its pipeline, the cloud
+# infrastructure, and one catalog entry, from one run.
+#
+# 1. A public repository <team>.<name> in idp-platform-apps, created with the
+#    scaffolder GitHub App: squash merge only, branches deleted on merge, main
+#    protected with the two always-run guardrails checks required and zero
+#    approvals (a single maintainer cannot approve their own pull request).
+#    Its CI publishes a two-architecture image to ECR Public from main.
+# 2. A pull request on idp-platform, opened with the gitops App, carrying the
+#    WebService claim and its Component entity. The claim starts on the
+#    digest-pinned base image, so the service can come up before the
+#    repository's first build finishes; the deploy template promotes the
+#    built digest later. Every claim value is also an annotation on the
+#    entity, because the deploy template re-renders the claim from them.
+#
+# The repository is created first, so a reviewer sees it and its first CI run
+# before merging the cloud half. The run is not a transaction: if the pull
+# request step fails, the repository stays, and scripts/check-scaffolded-repos.sh
+# finds it.
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: service
+  title: Service with repository and pipeline
+  description: A repository with CI that publishes its own image, plus a web service on your team's cloud and its catalog entry, delivered by pull request.
+  tags:
+    - webservice
+    - repository
+    - pipeline
+spec:
+  owner: group:default/platform
+  type: service
+  parameters:
+    - title: Service
+      required:
+        - name
+        - team
+        - costCenter
+      properties:
+        name:
+          title: Name
+          description: Lowercase letters, digits, and single hyphens. The repository is named <team>.<name>.
+          type: string
+          pattern: "^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$"
+          maxLength: 30
+        team:
+          title: Team
+          type: string
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+        port:
+          title: Port
+          description: Port the container listens on. The skeleton's image listens on 8080.
+          type: integer
+          minimum: 1024
+          maximum: 65535
+          default: 8080
+        healthPath:
+          title: Health check path
+          type: string
+          pattern: "^/[A-Za-z0-9._~/-]*$"
+          maxLength: 128
+          default: /
+        size:
+          title: Size
+          type: string
+          enum: [small, medium, large]
+          default: small
+        visibility:
+          title: Visibility
+          description: internal is reachable only from the platform network; public is reachable from the internet over HTTPS. Teams on AWS must choose public while the internal load balancer is off.
+          type: string
+          enum: [internal, public]
+          default: internal
+        maxInstances:
+          title: Maximum instances
+          type: integer
+          minimum: 1
+          maximum: 3
+          default: 1
+        environment:
+          title: Environment
+          type: string
+          enum: [dev, staging, prod]
+          default: dev
+        costCenter:
+          title: Cost center
+          type: string
+          pattern: "^cc-[0-9]{4}$"
+  steps:
+    - id: team
+      name: Look up team
+      action: catalog:fetch
+      input:
+        entityRef: ${{ parameters.team }}
+
+    # CODEOWNERS comes from the Group's hasMember relations. User entity
+    # names equal GitHub usernames (ADR-0019), so no mapping is needed. The
+    # workflow file is copied as is, because its GitHub expressions use the
+    # same delimiters as the scaffolder's templating.
+    - id: skeleton
+      name: Render repository
+      action: fetch:template
+      input:
+        url: ./skeleton-repo
+        targetPath: ./repo
+        copyWithoutTemplating:
+          - .github/workflows/*
+        values:
+          org: idp-platform-apps
+          repoName: ${{ steps.team.output.entity.metadata.name }}.${{ parameters.name }}
+          team: ${{ steps.team.output.entity.metadata.name }}
+          cloud: ${{ steps.team.output.entity.metadata.annotations['platform.jordandesigns.io/default-cloud'] }}
+          relations: ${{ steps.team.output.entity.relations }}
+
+    # The two required contexts are the guardrails jobs that run on every
+    # change whatever the stack: <caller job> / <called job name>.
+    - id: repo
+      name: Create repository
+      action: publish:github
+      input:
+        repoUrl: github.com?owner=idp-platform-apps&repo=${{ steps.team.output.entity.metadata.name }}.${{ parameters.name }}
+        sourcePath: ./repo
+        description: ${{ parameters.name }} for ${{ steps.team.output.entity.metadata.name }}, scaffolded by idp-platform.
+        repoVisibility: public
+        defaultBranch: main
+        gitCommitMessage: Initial skeleton from the idp-platform service template
+        hasWiki: false
+        hasProjects: false
+        allowMergeCommit: false
+        allowRebaseMerge: false
+        allowSquashMerge: true
+        deleteBranchOnMerge: true
+        topics:
+          - ${{ steps.team.output.entity.metadata.name }}
+          - idp-platform
+        protectDefaultBranch: true
+        protectEnforceAdmins: true
+        requiredApprovingReviewCount: 0
+        requireCodeOwnerReviews: false
+        requireBranchesToBeUpToDate: true
+        requiredStatusCheckContexts:
+          - guardrails / Detect stack
+          - guardrails / Secret scan (gitleaks)
+
+    - id: claim
+      name: Render claim
+      action: fetch:template
+      input:
+        url: ./skeleton-claim
+        targetPath: ./out/claims/${{ steps.team.output.entity.metadata.name }}
+        values: &claimValues
+          org: idp-platform-apps
+          repoName: ${{ steps.team.output.entity.metadata.name }}.${{ parameters.name }}
+          name: ${{ parameters.name }}
+          namespace: ${{ steps.team.output.entity.metadata.name }}
+          cloud: ${{ steps.team.output.entity.metadata.annotations['platform.jordandesigns.io/default-cloud'] }}
+          image: public.ecr.aws/nginx/nginx-unprivileged@sha256:59678856b05324b7f6371f26eb1520be7fcd8bdc8ab380fc4913db8503e5a842
+          port: ${{ parameters.port }}
+          healthPath: ${{ parameters.healthPath }}
+          size: ${{ parameters.size }}
+          visibility: ${{ parameters.visibility }}
+          maxInstances: ${{ parameters.maxInstances }}
+          environment: ${{ parameters.environment }}
+          costCenter: ${{ parameters.costCenter }}
+          owner: ${{ user.ref | parseEntityRef | pick('name') }}
+
+    - id: entity
+      name: Render catalog entity
+      action: fetch:template
+      input:
+        url: ./skeleton-entity
+        targetPath: ./out/backstage/catalog/resources/${{ steps.team.output.entity.metadata.name }}
+        values: *claimValues
+
+    - id: pr
+      name: Open pull request
+      action: publish:github:pull-request
+      input:
+        repoUrl: github.com?owner=jordann6&repo=idp-platform
+        targetBranchName: main
+        branchName: service/${{ steps.team.output.entity.metadata.name }}-${{ parameters.name }}
+        title: "Service ${{ parameters.name }} for ${{ steps.team.output.entity.metadata.name }}"
+        description: |
+          Requested through the Backstage service template.
+
+          Repository: https://github.com/idp-platform-apps/${{ steps.team.output.entity.metadata.name }}.${{ parameters.name }}
+          Team: ${{ steps.team.output.entity.metadata.name }}
+          Image: the skeleton's base image until the deploy template promotes a built digest
+          Size: ${{ parameters.size }}
+          Visibility: ${{ parameters.visibility }}
+          Environment: ${{ parameters.environment }}
+          Cost center: ${{ parameters.costCenter }}
+
+          Merging this PR lets Argo CD create the WebService and adds it to the catalog, linked to its repository. Closing it creates nothing in the cloud; the repository stays until it is archived or deleted (ADR-0024, Teardown).
+        sourcePath: ./out
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps.repo.output.remoteUrl }}
+      - title: Pull request
+        url: ${{ steps.pr.output.remoteUrl }}
