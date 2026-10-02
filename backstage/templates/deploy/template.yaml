@@ -1,0 +1,104 @@
+# Promote an image a service's own pipeline built (ADR-0024). The developer
+# picks the service's Component and pastes the digest from the publish job's
+# summary. The template builds the reference itself from the Component's own
+# repository annotation, so this path cannot point a service at another
+# repository's image, then re-renders the claim and the entity from the
+# entity's annotations with the new image and opens a pull request. Rolling
+# back is the same template with the previous digest.
+#
+# registryAlias is ECR Public's alias for this account, assigned by AWS when
+# the first repository was created. It is not a secret. Until it is set the
+# rendered image contains capitals, which the XRD rejects at the dry run.
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: deploy
+  title: Deploy a built image
+  description: Point a scaffolded service at an image its pipeline published, by digest, through a reviewed pull request.
+  tags:
+    - webservice
+    - deploy
+spec:
+  owner: group:default/platform
+  type: service
+  parameters:
+    - title: Deploy
+      required:
+        - component
+        - digest
+      properties:
+        component:
+          title: Service
+          description: A service created by the service template.
+          type: string
+          ui:field: EntityPicker
+          ui:options:
+            allowArbitraryValues: false
+            catalogFilter:
+              kind: Component
+              metadata.annotations.platform.jordandesigns.io/repository:
+                exists: true
+        digest:
+          title: Digest
+          description: The digest from the publish job's summary, sha256 followed by 64 hex characters.
+          type: string
+          pattern: "^sha256:[a-f0-9]{64}$"
+  steps:
+    - id: svc
+      name: Look up service
+      action: catalog:fetch
+      input:
+        entityRef: ${{ parameters.component }}
+
+    - id: claim
+      name: Render claim
+      action: fetch:template
+      input:
+        url: ../service/skeleton-claim
+        targetPath: ./out/claims/${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/team'] }}
+        values: &deployValues
+          org: idp-platform-apps
+          repoName: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/repository'] | replace('idp-platform-apps/', '') }}
+          name: ${{ steps.svc.output.entity.metadata.title }}
+          namespace: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/team'] }}
+          cloud: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/cloud'] }}
+          image: public.ecr.aws/ALIAS_UNSET/${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/repository'] }}@${{ parameters.digest }}
+          port: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/port'] }}
+          healthPath: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/health-path'] }}
+          size: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/size'] }}
+          visibility: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/visibility'] }}
+          maxInstances: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/max-instances'] }}
+          environment: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/environment'] }}
+          costCenter: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/cost-center'] }}
+          owner: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/requested-by'] }}
+
+    - id: entity
+      name: Render catalog entity
+      action: fetch:template
+      input:
+        url: ../service/skeleton-entity
+        targetPath: ./out/backstage/catalog/resources/${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/team'] }}
+        values: *deployValues
+
+    - id: pr
+      name: Open pull request
+      action: publish:github:pull-request
+      input:
+        repoUrl: github.com?owner=jordann6&repo=idp-platform
+        targetBranchName: main
+        branchName: deploy/${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/team'] }}-${{ steps.svc.output.entity.metadata.title }}-${{ parameters.digest | replace('sha256:', '') | truncate(12, true, '') }}
+        title: "Deploy ${{ steps.svc.output.entity.metadata.title }} for ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/team'] }} at ${{ parameters.digest | truncate(19, true, '') }}"
+        description: |
+          Requested through the Backstage deploy template by ${{ user.ref | parseEntityRef | pick('name') }}.
+
+          Repository: https://github.com/${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/repository'] }}
+          Previous image: ${{ steps.svc.output.entity.metadata.annotations['platform.jordandesigns.io/image'] }}
+          New digest: ${{ parameters.digest }}
+
+          Only the image changes; every other value is re-rendered from the catalog entity's annotations. Merging this PR rolls the service onto the new image.
+        sourcePath: ./out
+
+  output:
+    links:
+      - title: Pull request
+        url: ${{ steps.pr.output.remoteUrl }}

@@ -1,0 +1,38 @@
+# Written by the Backstage service or deploy template next to the claim it
+# describes. The running service and its repository are one catalog entry.
+# The platform.jordandesigns.io value annotations mirror the claim exactly:
+# the deploy template re-renders the claim from them, and
+# scripts/check-claim-entities.sh fails when they disagree (ADR-0024).
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.namespace }}-${{ values.name }}
+  title: ${{ values.name }}
+  description: Web service ${{ values.name }} for ${{ values.namespace }}, with its repository ${{ values.org }}/${{ values.repoName }}.
+  annotations:
+    github.com/project-slug: ${{ values.org }}/${{ values.repoName }}
+    backstage.io/source-location: url:https://github.com/${{ values.org }}/${{ values.repoName }}/tree/main/
+    platform.jordandesigns.io/claim: claims/${{ values.namespace }}/${{ values.name }}.webservice.yaml
+    platform.jordandesigns.io/repository: ${{ values.org }}/${{ values.repoName }}
+    platform.jordandesigns.io/team: ${{ values.namespace }}
+    platform.jordandesigns.io/cloud: ${{ values.cloud }}
+    platform.jordandesigns.io/image: "${{ values.image }}"
+    platform.jordandesigns.io/port: "${{ values.port }}"
+    platform.jordandesigns.io/health-path: "${{ values.healthPath }}"
+    platform.jordandesigns.io/size: ${{ values.size }}
+    platform.jordandesigns.io/visibility: ${{ values.visibility }}
+    platform.jordandesigns.io/max-instances: "${{ values.maxInstances }}"
+    platform.jordandesigns.io/environment: ${{ values.environment }}
+    platform.jordandesigns.io/cost-center: ${{ values.costCenter }}
+    platform.jordandesigns.io/requested-by: ${{ values.owner }}
+  links:
+    - url: https://github.com/${{ values.org }}/${{ values.repoName }}
+      title: Repository
+  tags:
+    - webservice
+    - ${{ values.cloud }}
+spec:
+  type: service
+  lifecycle: ${{ values.environment }}
+  owner: group:default/${{ values.namespace }}
+  system: webservices
