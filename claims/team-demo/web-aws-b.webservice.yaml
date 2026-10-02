@@ -13,7 +13,7 @@ spec:
   port: 8080
   healthPath: /
   size: small
-  visibility: public
+  visibility: internal
   maxInstances: 1
   region: us-east
   owner: guest
