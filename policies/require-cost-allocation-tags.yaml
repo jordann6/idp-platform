@@ -16,34 +16,40 @@ spec:
   evaluation:
     background:
       enabled: true
+  # Composed kinds are named by version, never "*": Kyverno's reports
+  # controller cannot resolve a wildcard version to a kind, so it never
+  # watched these resources and produced no PolicyReport for them, while
+  # admission still enforced (found live, ADR-0023). Equivalent keeps a
+  # request in a future served version matched through conversion.
   matchConstraints:
+    matchPolicy: Equivalent
     resourceRules:
       - apiGroups: ["rds.aws.m.upbound.io"]
-        apiVersions: ["*"]
+        apiVersions: ["v1beta1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["instances"]
       - apiGroups: ["ecs.aws.m.upbound.io"]
-        apiVersions: ["*"]
+        apiVersions: ["v1beta1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["services", "taskdefinitions"]
       - apiGroups: ["elbv2.aws.m.upbound.io"]
-        apiVersions: ["*"]
+        apiVersions: ["v1beta1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["lbtargetgroups", "lblistenerrules"]
       - apiGroups: ["sql.gcp.m.upbound.io"]
-        apiVersions: ["*"]
+        apiVersions: ["v1beta1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["databaseinstances"]
       - apiGroups: ["cloudrun.gcp.m.upbound.io"]
-        apiVersions: ["*"]
+        apiVersions: ["v1beta1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["v2services"]
       - apiGroups: ["dbforpostgresql.azure.m.upbound.io"]
-        apiVersions: ["*"]
+        apiVersions: ["v1beta1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["flexibleservers"]
       - apiGroups: ["containerapp.azure.m.upbound.io"]
-        apiVersions: ["*"]
+        apiVersions: ["v1beta1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["containerapps"]
   # An update to an object that is already being deleted only removes
