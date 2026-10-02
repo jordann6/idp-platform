@@ -33,6 +33,7 @@ jobs:
       aws_budget: ${{ steps.diff.outputs.aws_budget }}
       aws_network: ${{ steps.diff.outputs.aws_network }}
       aws_ingress: ${{ steps.diff.outputs.aws_ingress }}
+      aws_ci_publish: ${{ steps.diff.outputs.aws_ci_publish }}
       azure_crossplane_auth: ${{ steps.diff.outputs.azure_crossplane_auth }}
       azure_budget: ${{ steps.diff.outputs.azure_budget }}
       azure_network: ${{ steps.diff.outputs.azure_network }}
@@ -134,6 +135,13 @@ jobs:
     uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
     with:
       terraform_dir: bootstrap/aws/ingress
+
+  static-aws-ci-publish:
+    needs: changes
+    if: needs.changes.outputs.aws_ci_publish == 'true'
+    uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
+    with:
+      terraform_dir: bootstrap/aws/ci-publish
 
   static-azure-auth:
     needs: changes

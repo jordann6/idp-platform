@@ -13,6 +13,7 @@ aws_crossplane_auth=bootstrap/aws/crossplane-auth
 aws_budget=bootstrap/aws/budget
 aws_network=bootstrap/aws/network
 aws_ingress=bootstrap/aws/ingress
+aws_ci_publish=bootstrap/aws/ci-publish
 azure_crossplane_auth=bootstrap/azure/crossplane-auth
 azure_budget=bootstrap/azure/budget
 azure_network=bootstrap/azure/network
