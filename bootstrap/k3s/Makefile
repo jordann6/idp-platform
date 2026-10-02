@@ -16,6 +16,14 @@ define wait_provider_pod
 	$(KCTL) -n crossplane-system wait pod -l pkg.crossplane.io/provider=$(1) --for=condition=Ready --timeout=600s
 endef
 
+# Removing a family provider marks its ClusterProviderConfig for deletion,
+# held by the in-use finalizer until the provider returns and clears it. On a
+# reinstall, applying the config while it is still terminating is a no-op and
+# the provider then deletes it, so wait for the old object to go first.
+define wait_config_settled
+	@if $(KCTL) get $(1) -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null | grep -q .; then echo "waiting for terminating $(1)"; $(KCTL) wait --for=delete $(1) --timeout=300s; fi
+endef
+
 .PHONY: vm-up vm-stop vm-destroy k3s k3s-check verify discovery-docs guard-no-managed
 
 vm-up:
@@ -67,6 +75,7 @@ aws-provider:
 	$(KCTL) apply -f ../../crossplane/providers/aws/mrap.yaml
 	$(call wait_provider_pod,provider-aws-s3)
 	$(call wait_provider_pod,provider-aws-rds)
+	$(call wait_config_settled,clusterproviderconfig.aws.m.upbound.io/aws)
 	@arn=$$(terraform -chdir=$(AUTH_TF) output -raw provider_role_arn) && test -n "$$arn" && sed "s|__PROVIDER_ROLE_ARN__|$$arn|" ../../crossplane/providers/aws/cluster-provider-config.yaml | $(KCTL) apply -f -
 
 aws-verify:
@@ -76,6 +85,24 @@ aws-verify:
 
 aws-verify-delete:
 	$(KCTL) -n idp-verify delete bucket.s3.aws.m.upbound.io/verify --wait
+
+# ADR-0017: re-adopt an RDS instance after a control plane rebuild. The new MR
+# cannot create (DBInstanceAlreadyExists), so look up the AWS-assigned
+# resource ID and set it as the external name. The rebuilt control plane also
+# generated a new master password, and the provider cannot read the old one
+# back from RDS, so push the new one; otherwise the connection Secret holds a
+# password RDS never received. The password reaches the AWS CLI through a
+# private temporary file, removed on exit, never on the command line.
+.PHONY: rds-readopt
+rds-readopt:
+	@test -n "$(NS)" && test -n "$(NAME)" || { echo "usage: make rds-readopt NS=<namespace> NAME=<database>"; exit 1; }
+	@id=$$(aws rds describe-db-instances --region us-east-1 --db-instance-identifier idp-$(NS)-$(NAME) --query 'DBInstances[0].DbiResourceId' --output text) && test -n "$$id" && \
+	mr=$$($(KCTL) -n $(NS) get instance.rds.aws.m.upbound.io -l crossplane.io/composite=$(NAME) -o name) && test -n "$$mr" && \
+	$(KCTL) -n $(NS) annotate $$mr crossplane.io/external-name=$$id --overwrite
+	@until $(KCTL) -n $(NS) get secret $(NAME)-master >/dev/null 2>&1; do sleep 5; done
+	@req=$$(mktemp) && chmod 600 $$req && trap 'rm -f '$$req EXIT && \
+	$(KCTL) -n $(NS) get secret $(NAME)-master -o jsonpath='{.data.password}' | python3 -c 'import base64,json,sys; print(json.dumps({"DBInstanceIdentifier": sys.argv[1], "MasterUserPassword": base64.b64decode(sys.stdin.read()).decode(), "ApplyImmediately": True}))' idp-$(NS)-$(NAME) > $$req && \
+	aws rds modify-db-instance --region us-east-1 --cli-input-json file://$$req --query 'DBInstance.PendingModifiedValues' --output json
 
 # Sub-providers installed for the current phase; must match providers.yaml.
 AZURE_SUBPROVIDERS := provider-azure-dbforpostgresql
@@ -89,6 +116,7 @@ azure-provider:
 	$(KCTL) apply -f ../../crossplane/providers/azure/mrap.yaml
 	$(call wait_provider_pod,provider-family-azure)
 	for p in $(AZURE_SUBPROVIDERS); do until $(KCTL) -n crossplane-system get pod -l pkg.crossplane.io/provider=$$p -o name | grep -q .; do sleep 2; done; $(KCTL) -n crossplane-system wait pod -l pkg.crossplane.io/provider=$$p --for=condition=Ready --timeout=600s || exit 1; done
+	$(call wait_config_settled,clusterproviderconfig.azure.m.upbound.io/azure)
 	@client=$$(terraform -chdir=$(AZURE_AUTH_TF) output -raw client_id) && tenant=$$(terraform -chdir=$(AZURE_AUTH_TF) output -raw tenant_id) && sub=$$(terraform -chdir=$(AZURE_AUTH_TF) output -raw subscription_id) && test -n "$$client" && test -n "$$tenant" && test -n "$$sub" && sed -e "s|__AZURE_CLIENT_ID__|$$client|" -e "s|__AZURE_TENANT_ID__|$$tenant|" -e "s|__AZURE_SUBSCRIPTION_ID__|$$sub|" ../../crossplane/providers/azure/cluster-provider-config.yaml | $(KCTL) apply -f -
 	@sub=$$(terraform -chdir=$(AZURE_AUTH_TF) output -raw subscription_id) && test -n "$$sub" && sed "s|__AZURE_SUBSCRIPTION_ID__|$$sub|" ../../crossplane/providers/azure/platform-azure-subscription.yaml | $(KCTL) apply -f -
 
@@ -119,6 +147,7 @@ gcp-provider: gcp-adc
 	$(KCTL) wait provider.pkg.crossplane.io/provider-family-gcp $(addprefix provider.pkg.crossplane.io/,$(GCP_SUBPROVIDERS)) --for=condition=Healthy=True --timeout=600s
 	$(KCTL) apply -f ../../crossplane/providers/gcp/mrap.yaml
 	for p in $(GCP_SUBPROVIDERS); do until $(KCTL) -n crossplane-system get pod -l pkg.crossplane.io/provider=$$p -o name | grep -q .; do sleep 2; done; $(KCTL) -n crossplane-system wait pod -l pkg.crossplane.io/provider=$$p --for=condition=Ready --timeout=600s || exit 1; done
+	$(call wait_config_settled,clusterproviderconfig.gcp.m.upbound.io/gcp)
 	@project=$$(terraform -chdir=$(GCP_AUTH_TF) output -raw project_id) && test -n "$$project" && sed "s|__GCP_PROJECT_ID__|$$project|" ../../crossplane/providers/gcp/cluster-provider-config.yaml | $(KCTL) apply -f -
 
 gcp-verify:
