@@ -86,7 +86,6 @@ All five platform phases and Phase 6 (repository and pipeline scaffolding) are c
 
 Known gaps, each recorded with its cause in DECISIONS.md:
 
-- On AWS, deploying a newly built image works once per service. The second change does not reach AWS yet, because the ECS Service stays unsynced after the first task definition switch. The fix is designed in ADR-0022.
 - The control plane runs on a laptop, so it reconciles only while the laptop is awake, and Backstage is reachable only through a port-forward.
 - Connection Secrets are plaintext Kubernetes Secrets; External Secrets is the deferred production path (ADR-0002).
 - Kyverno policies for an `xcluster` type (pod security, private API endpoint) wait for that type.
