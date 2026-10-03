@@ -1,0 +1,24 @@
+# Written by the Backstage service or deploy template. Every value here is
+# also an annotation on the paired catalog entity, because the deploy
+# template re-renders this file from them; scripts/check-claim-entities.sh
+# fails when the two disagree (ADR-0024).
+apiVersion: platform.jordandesigns.io/v1alpha1
+kind: WebService
+metadata:
+  name: web-a
+  namespace: team-demo
+spec:
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        platform.jordandesigns.io/cloud: aws
+  image: public.ecr.aws/nginx/nginx-unprivileged@sha256:59678856b05324b7f6371f26eb1520be7fcd8bdc8ab380fc4913db8503e5a842
+  port: 8080
+  healthPath: /
+  size: small
+  visibility: public
+  maxInstances: 1
+  region: us-east
+  owner: jordann6
+  costCenter: cc-1001
+  environment: dev
