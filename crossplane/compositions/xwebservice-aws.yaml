@@ -137,14 +137,32 @@ spec:
                   "Environment" $spec.environment
                   "Team" $ns
                   "WebService" $name }}
+            {{- /*
+              A task definition revision is immutable, and the provider refuses
+              any change that needs a replacement, which is every field except
+              tags. Updating it in place left the service on the old revision
+              while the XR reported Ready (ADR-0022). So the composed task
+              definition is named by a hash of everything that would force a
+              replacement: a new image or size composes a new task definition,
+              the Service moves to it, and the old one is deleted, which
+              deregisters its revision.
+            */}}
+            {{- $tdSpec := dict
+                  "containerDefinitions" (list $container)
+                  "cpu" (index $cpu $spec.size)
+                  "memory" (index $mem $spec.size)
+                  "executionRoleArn" $ing.executionRoleArn
+                  "family" $base }}
+            {{- $tdHash := $tdSpec | toJson | sha256sum | trunc 10 }}
             ---
             apiVersion: ecs.aws.m.upbound.io/v1beta1
             kind: TaskDefinition
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: task-definition
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ printf "task-definition-%s" $tdHash }}
               labels:
                 platform.jordandesigns.io/component: task-definition
+                platform.jordandesigns.io/task-definition-hash: {{ $tdHash | quote }}
             spec:
               providerConfigRef:
                 kind: ClusterProviderConfig
@@ -267,12 +285,14 @@ spec:
                 # autoscaling up to the ceiling needs provider-aws-appautoscaling
                 # and application-autoscaling IAM, deferred (ADR-0022).
                 desiredCount: 1
-                # Each change registers a new task definition revision, so the
-                # reference is re-resolved on every reconcile.
+                # Each change composes a new task definition, and while the old
+                # one is being deleted both exist, so the selector names the
+                # current one by its hash and is re-resolved on every reconcile.
                 taskDefinitionSelector:
                   matchControllerRef: true
                   matchLabels:
                     platform.jordandesigns.io/component: task-definition
+                    platform.jordandesigns.io/task-definition-hash: {{ $tdHash | quote }}
                   policy:
                     resolve: Always
                 networkConfiguration:
