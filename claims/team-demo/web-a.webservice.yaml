@@ -12,7 +12,7 @@ spec:
     compositionSelector:
       matchLabels:
         platform.jordandesigns.io/cloud: aws
-  image: public.ecr.aws/nginx/nginx-unprivileged@sha256:59678856b05324b7f6371f26eb1520be7fcd8bdc8ab380fc4913db8503e5a842
+  image: public.ecr.aws/l1l7k5g9/idp-platform-apps/team-demo.web-a@sha256:2558c642338c5394bbe98adae6b61f759449529e42ab31d041bd36198de530ea
   port: 8080
   healthPath: /
   size: small
