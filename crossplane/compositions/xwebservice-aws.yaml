@@ -261,7 +261,23 @@ spec:
               therefore composed only once the target group exists (ADR-0022).
             */}}
             {{- $tgArn := dig "observed" "resources" "target-group" "resource" "status" "atProvider" "arn" "" $ }}
-            {{- if and $tgArn (not $refused) }}
+            {{- /*
+              The task definition ARN is set directly too, from the observed
+              task definition of the current hash. A selector was tried first
+              and failed live: while the old task definition was being deleted
+              and the new one did not exist yet, the selector matched nothing,
+              and the reference resolver's server-side apply then kept the
+              Service at Synced=False ("taskDefinitionRef.name: Required
+              value") on every reconcile, so the next change could not reach
+              AWS (ADR-0022). Until the new task definition has an ARN, the
+              Service keeps the ARN it already has; on first create it waits
+              for one.
+            */}}
+            {{- $tdArn := dig "observed" "resources" (printf "task-definition-%s" $tdHash) "resource" "status" "atProvider" "arn" "" $ }}
+            {{- if not $tdArn }}
+            {{- $tdArn = dig "observed" "resources" "service" "resource" "spec" "forProvider" "taskDefinition" "" $ }}
+            {{- end }}
+            {{- if and $tgArn $tdArn (not $refused) }}
             ---
             apiVersion: ecs.aws.m.upbound.io/v1beta1
             kind: Service
@@ -269,6 +285,11 @@ spec:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: service
                 crossplane.io/external-name: {{ $base }}
+                {{- /* Not ready until AWS reports the service on this task definition, so the XR is not Ready mid-deploy. */}}
+                {{- $runningTd := dig "observed" "resources" "service" "resource" "status" "atProvider" "taskDefinition" "" $ }}
+                {{- if ne $runningTd $tdArn }}
+                gotemplating.fn.crossplane.io/ready: "False"
+                {{- end }}
               labels:
                 platform.jordandesigns.io/component: service
             spec:
@@ -285,16 +306,8 @@ spec:
                 # autoscaling up to the ceiling needs provider-aws-appautoscaling
                 # and application-autoscaling IAM, deferred (ADR-0022).
                 desiredCount: 1
-                # Each change composes a new task definition, and while the old
-                # one is being deleted both exist, so the selector names the
-                # current one by its hash and is re-resolved on every reconcile.
-                taskDefinitionSelector:
-                  matchControllerRef: true
-                  matchLabels:
-                    platform.jordandesigns.io/component: task-definition
-                    platform.jordandesigns.io/task-definition-hash: {{ $tdHash | quote }}
-                  policy:
-                    resolve: Always
+                # Set from the observed task definition, not a selector (above).
+                taskDefinition: {{ $tdArn }}
                 networkConfiguration:
                   subnets:
                     {{- toYaml $aws.privateSubnetIds | nindent 20 }}
@@ -355,7 +368,7 @@ spec:
         source: Inline
         inline:
           template: |
-            {{- /* The Service, and so its Usage, exists only once the target group has an ARN. */}}
+            {{- /* The Service exists only once the target group and a task definition have ARNs, so its Usage waits for the observed Service. */}}
             {{- /* No listener rule or service is composed while ingress is refused (fail closed, step above). */}}
             {{- $ing := (index .context "apiextensions.crossplane.io/environment").awsIngress }}
             {{- $public := eq .observed.composite.resource.spec.visibility "public" }}
@@ -363,7 +376,7 @@ spec:
             {{- $users := list }}
             {{- if not $refused }}
             {{- $users = append $users "listener-rule" }}
-            {{- if dig "observed" "resources" "target-group" "resource" "status" "atProvider" "arn" "" . }}
+            {{- if and (dig "observed" "resources" "target-group" "resource" "status" "atProvider" "arn" "" .) (dig "observed" "resources" "service" "resource" "metadata" "name" "" .) }}
             {{- $users = append $users "service" }}
             {{- end }}
             {{- end }}
