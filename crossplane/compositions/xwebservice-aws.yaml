@@ -221,7 +221,18 @@ spec:
                   unhealthyThreshold: 3
                 tags:
                   {{- toYaml $tags | nindent 18 }}
-            {{- if not $refused }}
+            {{- /*
+              The listener rule and the ECS Service name the target group by
+              ARN, read from the observed target group, and are composed only
+              once it exists (ADR-0022). Neither uses targetGroupArnSelector:
+              from the ecs provider that selector never resolves ("referenced
+              field was empty"), and on the listener rule the resolver's value
+              lived only in the list item, so the composed apply at deletion
+              replaced the action list without it, and the rule could not even
+              compute its diff to be deleted.
+            */}}
+            {{- $tgArn := dig "observed" "resources" "target-group" "resource" "status" "atProvider" "arn" "" $ }}
+            {{- if and $tgArn (not $refused) }}
             ---
             apiVersion: elbv2.aws.m.upbound.io/v1beta1
             kind: LBListenerRule
@@ -240,10 +251,7 @@ spec:
                 priority: {{ $priority }}
                 action:
                   - type: forward
-                    targetGroupArnSelector:
-                      matchControllerRef: true
-                      matchLabels:
-                        platform.jordandesigns.io/component: target-group
+                    targetGroupArn: {{ $tgArn }}
                 condition:
                   - hostHeader:
                       values:
@@ -251,16 +259,6 @@ spec:
                 tags:
                   {{- toYaml $tags | nindent 18 }}
             {{- end }}
-            {{- /*
-              The ECS Service names its target group by ARN, read here from the
-              observed target group rather than through targetGroupArnSelector.
-              In provider-upjet-aws v2.8.1 that selector crosses from the ecs
-              provider to the elbv2 provider and never resolves ("referenced
-              field was empty") although the target group has its ARN; the
-              elbv2 listener rule resolves the same selector. The Service is
-              therefore composed only once the target group exists (ADR-0022).
-            */}}
-            {{- $tgArn := dig "observed" "resources" "target-group" "resource" "status" "atProvider" "arn" "" $ }}
             {{- /*
               The task definition ARN is set directly too, from the observed
               task definition of the current hash. A selector was tried first
@@ -368,14 +366,16 @@ spec:
         source: Inline
         inline:
           template: |
-            {{- /* The Service exists only once the target group and a task definition have ARNs, so its Usage waits for the observed Service. */}}
+            {{- /* The listener rule and the Service exist only once the target group (and, for the Service, a task definition) have ARNs, so each Usage waits for its observed user. */}}
             {{- /* No listener rule or service is composed while ingress is refused (fail closed, step above). */}}
             {{- $ing := (index .context "apiextensions.crossplane.io/environment").awsIngress }}
             {{- $public := eq .observed.composite.resource.spec.visibility "public" }}
             {{- $refused := not (ternary $ing.publicListenerArn $ing.internalListenerArn $public) }}
             {{- $users := list }}
             {{- if not $refused }}
+            {{- if dig "observed" "resources" "listener-rule" "resource" "metadata" "name" "" . }}
             {{- $users = append $users "listener-rule" }}
+            {{- end }}
             {{- if and (dig "observed" "resources" "target-group" "resource" "status" "atProvider" "arn" "" .) (dig "observed" "resources" "service" "resource" "metadata" "name" "" .) }}
             {{- $users = append $users "service" }}
             {{- end }}
