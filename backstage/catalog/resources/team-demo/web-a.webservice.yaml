@@ -1,0 +1,38 @@
+# Written by the Backstage service or deploy template next to the claim it
+# describes. The running service and its repository are one catalog entry.
+# The platform.jordandesigns.io value annotations mirror the claim exactly:
+# the deploy template re-renders the claim from them, and
+# scripts/check-claim-entities.sh fails when they disagree (ADR-0024).
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: team-demo-web-a
+  title: web-a
+  description: Web service web-a for team-demo, with its repository idp-platform-apps/team-demo.web-a.
+  annotations:
+    github.com/project-slug: idp-platform-apps/team-demo.web-a
+    backstage.io/source-location: url:https://github.com/idp-platform-apps/team-demo.web-a/tree/main/
+    platform.jordandesigns.io/claim: claims/team-demo/web-a.webservice.yaml
+    platform.jordandesigns.io/repository: idp-platform-apps/team-demo.web-a
+    platform.jordandesigns.io/team: team-demo
+    platform.jordandesigns.io/cloud: aws
+    platform.jordandesigns.io/image: "public.ecr.aws/nginx/nginx-unprivileged@sha256:59678856b05324b7f6371f26eb1520be7fcd8bdc8ab380fc4913db8503e5a842"
+    platform.jordandesigns.io/port: "8080"
+    platform.jordandesigns.io/health-path: "/"
+    platform.jordandesigns.io/size: small
+    platform.jordandesigns.io/visibility: public
+    platform.jordandesigns.io/max-instances: "1"
+    platform.jordandesigns.io/environment: dev
+    platform.jordandesigns.io/cost-center: cc-1001
+    platform.jordandesigns.io/requested-by: jordann6
+  links:
+    - url: https://github.com/idp-platform-apps/team-demo.web-a
+      title: Repository
+  tags:
+    - webservice
+    - aws
+spec:
+  type: service
+  lifecycle: dev
+  owner: group:default/team-demo
+  system: webservices
