@@ -23,7 +23,7 @@ Every design decision and every place the abstraction leaks is recorded in [DECI
 | Image cache | ECR pull-through cache | Artifact Registry remote repository | ACR cache rule |
 | Region `us-east` | `us-east-1` | `us-east1` | `eastus2` (ADR-0003) |
 
-A `Database` returns a Secret named `<name>-conn` with exactly six keys (`host`, `port`, `username`, `password`, `dbname`, `sslmode`) on every cloud, and the XR is Ready only once that Secret is complete (ADR-0016). A `WebService` reports `status.url`, the HTTPS URL, whichever cloud produced it.
+A `Database` returns a Secret named `<name>-conn` with exactly six keys (`host`, `port`, `username`, `password`, `dbname`, `sslmode`) on every cloud, and the XR is Ready only once that Secret is complete (ADR-0016). A `WebService` reports `status.url`, the HTTPS URL, whichever cloud produced it. Changing its image or size rolls out on every cloud: Cloud Run and Container Apps create a new revision; on AWS each change composes a new ECS task definition revision, the service moves to it, and the old one is deregistered. The XR reports Ready False from the moment a change is merged until the runtime is on it, so a deploy in progress never reads as done (ADR-0022).
 
 The XRDs expose intent only: t-shirt sizes (`small`, `medium`, `large`), a platform region, `environment`, `owner`, and `costCenter`, plus `image` (digest pinned), `port`, `healthPath`, `maxInstances`, `visibility` (`internal` or `public`), and `env` for web services. Cloud SKU names, subnets, security groups, and load balancers never appear in the API.
 
@@ -36,7 +36,7 @@ The `service` template (ADR-0024) does four things in one run:
 1. Creates `idp-platform-apps/<team>.<name>`, a public repository in a dedicated GitHub organization, with branch protection, two required checks, CODEOWNERS from the team's members, and secret scanning push protection.
 2. Pushes a skeleton whose CI calls the shared guardrails workflow (gitleaks, Trivy) pinned by commit SHA. On `main` it builds `linux/amd64` and `linux/arm64` and publishes the index to ECR Public through GitHub OIDC.
 3. Opens a pull request on this repository with the `WebService` claim on a known-good base image and its catalog Component, which links back to the repository.
-4. After that merges, the `deploy` template moves the service onto the digest its own pipeline built, through one more reviewed pull request.
+4. After that merges, the `deploy` template moves the service onto the digest its own pipeline built, through one more reviewed pull request. Every later build is promoted the same way, and rolling back is the same template with the previous digest.
 
 ## Identity
 
@@ -82,7 +82,15 @@ The Backstage image is the platform's own build of `backstage/app`: `make backst
 
 ## Status
 
-All five platform phases and Phase 6 (repository and pipeline scaffolding) are complete and were proven live through GitOps on all three clouds, then torn down. Standing cost between demos is about $0.50 a month (the Azure private DNS zone).
+All five platform phases and Phase 6 (repository and pipeline scaffolding) are complete and were proven live through GitOps on all three clouds, then torn down. On AWS, one service took three image changes and a size change in a row, each rolling out with the managed resources in sync throughout, and deleting a claim by git removes every cloud resource with no manual step. Standing cost between demos is about $0.50 a month (the Azure private DNS zone).
+
+Leaks the live runs found and fixed, each with its cause in DECISIONS.md:
+
+- A refused update kept the old state live: a service switched to internal on AWS stayed reachable while reporting Ready. Compositions now fail closed, and admission refuses the request (ADR-0022, ADR-0023).
+- An ECS task definition revision cannot be edited, so a new image never reached AWS while the XR said Ready. The task definition is now named by a hash of its contents (ADR-0022).
+- Cross-provider and in-list reference selectors broke on AWS (an unresolved target group, a Service stuck out of sync after a deploy, a listener rule that could not be deleted). Every reference in the AWS Composition is now an ARN read from the observed resource (ADR-0022).
+- Composed-resource policies admitted and denied correctly but produced no PolicyReports, because the reports controller could not resolve a wildcard API version (ADR-0023).
+- The IAM simulator allowed a bearer token condition the real ECR Public login does not satisfy (ADR-0024).
 
 Known gaps, each recorded with its cause in DECISIONS.md:
 
