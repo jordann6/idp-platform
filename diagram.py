@@ -181,7 +181,7 @@ with Diagram(
     app_repo >> Edge(label="push to main") >> ci
     ci >> Edge(label="4. publish by OIDC\ndigest in job summary") >> ecr_public
     pr >> Edge(label="merge") >> argo >> xp >> runtime
-    dev >> Edge(style="dashed", label="5. deploy with the digest") >> portal
+    dev >> Edge(style="dashed", label="5. deploy each built digest\n(reviewed PR every time)") >> portal
     ecr_public >> Edge(style="dashed", label="pulled through each cloud's cache") >> runtime[0]
     ecr_public >> Edge(style="dashed") >> runtime[1]
     ecr_public >> Edge(style="dashed") >> runtime[2]
