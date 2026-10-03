@@ -39,7 +39,7 @@ spec:
       properties:
         name:
           title: Name
-          description: Lowercase letters, digits, and single hyphens. The repository is named <team>.<name>.
+          description: Lowercase letters, digits, and single hyphens. The repository is named after the team and this name joined by a dot, for example team-demo.web-a.
           type: string
           pattern: "^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$"
           maxLength: 30
