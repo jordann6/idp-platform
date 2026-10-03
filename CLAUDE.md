@@ -8,7 +8,7 @@ A developer runs a Backstage Scaffolder template, picks a cloud and a size, and 
 
 ### v1 scope
 
-v1 (Phases 1 to 5, complete 2026-10-02) delivers cloud infrastructure and a catalog entry through a reviewed pull request, on all three clouds, with admission policy enforced. The cloud comes from the team, not a form field (ADR-0012). "A repo, a pipeline" from the Goal was deferred out of v1 and delivered by Phase 6 (ADR-0024, accepted 2026-10-02): two GitHub Apps with short-lived installation tokens, a dedicated organization for scaffolded repositories, public repositories so their CI costs no shared minutes, and keyless image publishing to ECR Public. One open item remains: deploying a built image on AWS fails open (ADR-0024, build step 5).
+v1 (Phases 1 to 5, complete 2026-10-02) delivers cloud infrastructure and a catalog entry through a reviewed pull request, on all three clouds, with admission policy enforced. The cloud comes from the team, not a form field (ADR-0012). "A repo, a pipeline" from the Goal was deferred out of v1 and delivered by Phase 6 (ADR-0024, accepted 2026-10-02): two GitHub Apps with short-lived installation tokens, a dedicated organization for scaffolded repositories, public repositories so their CI costs no shared minutes, and keyless image publishing to ECR Public.
 
 ## Stack
 
@@ -49,7 +49,7 @@ Work in this order. Do not start the next phase until the current one has a Read
 3. Azure: xdatabase-azure Composition.
 4. xwebservice XRD and three Compositions, same order.
 5. Kyverno policies (required tags, no public databases), FinOps tagging hooks.
-6. Repo and pipeline scaffolding (ADR-0024, complete 2026-10-02): the service template creates a repository in idp-platform-apps with branch protection, CODEOWNERS, and CI that publishes a two-architecture image to ECR Public through OIDC, plus the claim and catalog entry by pull request; the deploy template moves the service to a built digest by pull request. Proven live on GCP, Azure, and AWS; on AWS the deploy step is open until the task definition leak is fixed.
+6. Repo and pipeline scaffolding (ADR-0024, complete 2026-10-02): the service template creates a repository in idp-platform-apps with branch protection, CODEOWNERS, and CI that publishes a two-architecture image to ECR Public through OIDC, plus the claim and catalog entry by pull request; the deploy template moves the service to a built digest by pull request. Proven live on GCP, Azure, and AWS, including repeated image and size changes on AWS (ADR-0022).
 
 ## Abstraction rules
 
