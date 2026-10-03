@@ -1,0 +1,24 @@
+# Written by the Backstage WebService template next to the claim it describes.
+# A web service is a Component in Backstage terms, not a Resource. The team
+# owns it; the requester is recorded separately because guest sign-in means
+# every requester is guest for now (ADR-0019).
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: team-demo-web-tdfix3
+  title: web-tdfix3
+  description: Web service web-tdfix3 for team-demo, live proof of the listener rule deletion fix.
+  annotations:
+    backstage.io/source-location: url:https://github.com/jordann6/idp-platform/tree/main/claims/team-demo/
+    platform.jordandesigns.io/claim: claims/team-demo/web-tdfix3.webservice.yaml
+    platform.jordandesigns.io/cloud: aws
+    platform.jordandesigns.io/visibility: public
+    platform.jordandesigns.io/requested-by: jordann6
+  tags:
+    - webservice
+    - aws
+spec:
+  type: service
+  lifecycle: dev
+  owner: group:default/team-demo
+  system: webservices
